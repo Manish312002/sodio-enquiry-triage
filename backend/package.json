@@ -1,0 +1,24 @@
+{
+  "name": "sodio-enquiry-triage-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend for Sodio Enquiry Triage (Express + MongoDB + Mongoose). JavaScript only.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "health": "node -e \"fetch('http://localhost:3001/api/health').then(r=>r.json()).then(j=>console.log(JSON.stringify(j,null,2))).catch(e=>{console.error(e);process.exit(1)})\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.5.1",
+    "morgan": "^1.10.0",
+    "zod": "^3.23.8"
+  }
+}
