@@ -173,6 +173,11 @@ const enquirySchema = new Schema(
 // receivedAt is already queried often; compound with status for the queue.
 enquirySchema.index({ receivedAt: -1 });
 enquirySchema.index({ status: 1, receivedAt: -1 });
+// Phase 5: priority filter + sort
+enquirySchema.index({ 'priority.level': 1, receivedAt: -1 });
+enquirySchema.index({ 'priority.score': -1, receivedAt: -1 });
+// Phase 5: service-line filter
+enquirySchema.index({ 'effectiveExtraction.serviceLine': 1, receivedAt: -1 });
 
 /**
  * Strip Mongoose internals from a lean document for API responses.

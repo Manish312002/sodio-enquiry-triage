@@ -1,22 +1,29 @@
 /**
- * App shell — Phase 1.
+ * App shell — Phase 5 Triage Console.
  *
- * Layout (design.md §5, three-zone desktop composition simplified for Phase 1):
- *   ┌────────────────────────────────────────────────────┐
- *   │  HEADER  (SODIO / INBOX SIGNALS · health dot)      │
- *   ├──────────────────────┬─────────────────────────────┤
- *   │  PASTE ENQUIRY       │  DETAIL (SOURCE | EXTRACTED)│
- *   │  ENQUIRY QUEUE       │                             │
- *   └──────────────────────┴─────────────────────────────┘
+ * Three-zone desktop layout (design.md §5):
+ *   ┌──────────────────────────────────────────────────────────┐
+ *   │  HEADER  (SODIO / INBOX SIGNALS · count · health dot)    │
+ *   ├─────────────┬──────────────────────┬─────────────────────┤
+ *   │ FILTER RAIL │ ENQUIRY QUEUE        │ DETAIL              │
+ *   │             │                      │  STATUS strip       │
+ *   │ service     │  row row row …       │  SOURCE | EXTRACTED │
+ *   │ priority    │                      │                     │
+ *   │ status      │                      │                     │
+ *   └─────────────┴──────────────────────┴─────────────────────┘
  *
- * Phase 1 features wired here:
- *   - PasteEnquiry submits via createEnquiry thunk → POST /api/enquiries
- *   - EnquiryQueue lists recent items via fetchEnquiries thunk
- *   - EnquiryDetail shows the selected enquiry (SOURCE + EXTRACTION PENDING)
- *   - After page refresh, if localStorage has a lastCreatedId, fetchEnquiry
- *     re-loads that record so the operator sees what they last submitted
+ * At narrow widths: filter rail collapses, queue becomes primary,
+ * detail opens below (design.md §17).
  *
- * Phase 0 health indicator is preserved in the header.
+ * Phase 5 wiring:
+ *   - On mount + whenever filters/sort change → dispatch(fetchEnquiries({…}))
+ *   - PasteEnquiry is still available above the queue (collapsible strip)
+ *   - Health indicator in header (Phase 0)
+ *
+ * Architectural boundaries (Rules.md §9, Architechure.md §14):
+ *   - No priority calculation in React — only display.
+ *   - No direct LLM/MongoDB access — REST only.
+ *   - Filters + sort are passed as query params to the backend.
  */
 import { useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -26,6 +33,7 @@ import {
   fetchEnquiries,
 } from './features/enquiries/enquiryThunks';
 import PasteEnquiry from './components/PasteEnquiry/PasteEnquiry';
+import FilterRail from './components/FilterRail/FilterRail';
 import EnquiryQueue from './components/EnquiryQueue/EnquiryQueue';
 import EnquiryDetail from './components/EnquiryDetail/EnquiryDetail';
 
@@ -36,20 +44,33 @@ export default function App() {
   const system = useSelector((s) => s.enquiries.system);
   const lastCreatedId = useSelector((s) => s.enquiries.lastCreatedId);
   const selectedId = useSelector((s) => s.enquiries.selectedId);
+  const filters = useSelector((s) => s.enquiries.filters);
+  const sort = useSelector((s) => s.enquiries.sort);
+  const itemCount = useSelector((s) => s.enquiries.items.length);
 
   // Phase 0 — health indicator on mount.
   useEffect(() => {
     dispatch(fetchHealth());
   }, [dispatch]);
 
-  // Phase 1 — initial queue load.
+  // Phase 5 — refetch whenever filters or sort change.
+  // This is the single source of truth for queue state; FilterRail / SortBar
+  // only dispatch reducer actions, they do not call the API directly.
   useEffect(() => {
-    dispatch(fetchEnquiries({ limit: 50 }));
-  }, [dispatch]);
+    dispatch(
+      fetchEnquiries({
+        serviceLine: filters.serviceLine,
+        priority: filters.priority,
+        status: filters.status,
+        sort: sort.by,
+        dir: sort.dir,
+        limit: 100,
+      }),
+    );
+  }, [dispatch, filters, sort]);
 
   // Phase 1 — refresh retrieval: if we have no selection on mount, restore
-  // the last-created id from localStorage so the operator sees their last
-  // paste after a refresh. Runs exactly once on mount.
+  // the last-created id from localStorage.
   useEffect(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(LAST_CREATED_KEY) : null;
     if (stored && !selectedId) {
@@ -80,40 +101,55 @@ export default function App() {
   return (
     <div className="min-h-full flex flex-col">
       <header className="border-b border-line bg-surface-strong">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="font-mono text-micro tracking-widest text-ink-muted">SODIO</span>
             <span className="text-ink-muted">/</span>
-            <span className="font-mono text-micro tracking-widest text-ink-muted">INBOX SIGNALS</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden />
-            <span className="font-mono text-micro text-ink-muted">
-              {status === 'pending'
-                ? 'CHECKING…'
-                : status === 'succeeded'
-                  ? `${health?.status?.toUpperCase?.()} · DB ${health?.db?.toUpperCase?.()}`
-                  : status === 'failed'
-                    ? 'OFFLINE'
-                    : 'IDLE'}
+            <span className="font-mono text-micro tracking-widest text-ink-muted">
+              INBOX SIGNALS
             </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="font-mono text-micro text-ink-muted">
+              {itemCount} ENQUIRI{itemCount === 1 ? 'Y' : 'ES'}
+            </span>
+            <div className="flex items-center gap-2">
+              <span className={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden />
+              <span className="font-mono text-micro text-ink-muted">
+                {status === 'pending'
+                  ? 'CHECKING…'
+                  : status === 'succeeded'
+                    ? `${health?.status?.toUpperCase?.()} · DB ${health?.db?.toUpperCase?.()}`
+                    : status === 'failed'
+                      ? 'OFFLINE'
+                      : 'IDLE'}
+              </span>
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-6 space-y-4">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          <div className="space-y-4">
-            <PasteEnquiry />
-            <EnquiryQueue />
+      <main className="flex-1 w-full px-6 py-4 space-y-4">
+        {/* Compact paste strip — design.md §11 "feed intake" */}
+        <PasteEnquiry />
+
+        {/* Three-zone desktop layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-[200px_minmax(0,1fr)_minmax(0,1.5fr)] gap-4 items-start">
+          {/* Filter rail collapses below lg */}
+          <div className="lg:sticky lg:top-4">
+            <FilterRail />
           </div>
+
+          {/* Queue */}
+          <EnquiryQueue />
+
+          {/* Detail */}
           <EnquiryDetail />
         </div>
 
         <p className="mt-6 text-small text-ink-muted">
           Stack: React + Vite · Tailwind CSS · Redux Toolkit (createAsyncThunk) ·
-          Express · MongoDB + Mongoose · JavaScript only. Phase 1 — single
-          enquiry ingestion.
+          Express · MongoDB + Mongoose · JavaScript only. Phase 5 — Triage Console.
         </p>
       </main>
     </div>

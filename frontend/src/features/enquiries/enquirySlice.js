@@ -4,14 +4,24 @@
  * Architechure.md §11 specified state shape:
  *   enquiries: { items, selectedId, filters, sort, loading, error, batch }
  *
- * Phase 1 additions:
- *   - items[] now populated via fetchEnquiries
- *   - selectedId + selected hold the currently viewed enquiry (fetchEnquiry)
- *   - createStatus tracks the paste-submission lifecycle (idle|pending|succeeded|failed)
- *   - createError holds a normalized { message, code, status } on failure
- *   - lastCreatedId kept in localStorage by App.jsx so a refresh can re-fetch
+ * Phase 5 additions:
+ *   - filters { serviceLine, priority, status } now drive the fetchEnquiries
+ *     thunk — selectors re-dispatch when filters change.
+ *   - sort { by, dir } likewise. by ∈ 'priority' | 'receivedAt'; dir ∈ 'asc'|'desc'.
+ *   - updateEnquiryStatus thunk updates the matching item in-place AND
+ *     the selected enquiry if it matches.
+ *   - statusUpdateStatus / statusUpdateError track the status-mutation
+ *     lifecycle so the UI can show a per-row "saving…" / inline error.
  *
- * Phase 0 `system` sub-state is retained for the health indicator.
+ * Phase 1 retained:
+ *   - items[], selectedId, selected, selectedStatus/Error
+ *   - createStatus / createError / lastCreatedId
+ *
+ * Phase 0 retained:
+ *   - system.health / healthStatus / healthError
+ *
+ * NO scoring logic lives here. Priority is read from enquiry.priority
+ * as returned by the backend (Rules.md §9 / Phase 4 boundary).
  */
 import { createSlice } from '@reduxjs/toolkit';
 import {
@@ -19,10 +29,11 @@ import {
   createEnquiry,
   fetchEnquiry,
   fetchEnquiries,
+  updateEnquiryStatus,
 } from './enquiryThunks';
 
 const initialState = {
-  // Phase 1 — enquiry queue
+  // Enquiry queue
   items: [],
   listStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
   listError: null,
@@ -32,16 +43,22 @@ const initialState = {
   selectedStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
   selectedError: null,
 
-  // Phase 1 — paste submission
-  createStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
+  // Paste submission (Phase 1)
+  createStatus: 'idle',
   createError: null,
   lastCreatedId: null,
 
-  // Phase 5+ will populate filters/sort; declared now so the shape is stable.
+  // Phase 5 — filters + sort. These drive the fetchEnquiries thunk.
+  // 'all' means "no filter" — the backend treats it as omission.
   filters: { serviceLine: 'all', priority: 'all', status: 'all' },
-  sort: { by: 'priority', dir: 'desc' },
+  sort: { by: 'receivedAt', dir: 'desc' },
 
-  // Phase 0 — system health indicator (kept for App.jsx shell).
+  // Phase 5 — status mutation lifecycle
+  statusUpdateStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
+  statusUpdateError: null,
+  statusUpdateId: null, // which enquiry id is currently being updated
+
+  // Phase 0 — system health
   system: {
     health: null,
     healthStatus: 'idle',
@@ -53,7 +70,30 @@ const enquirySlice = createSlice({
   name: 'enquiries',
   initialState,
   reducers: {
-    // --- selection / phase 5+ UI reducers will live here; for now a reset is enough ---
+    // --- Phase 5 filter / sort reducers ---
+    setServiceLineFilter(state, action) {
+      state.filters.serviceLine = action.payload;
+    },
+    setPriorityFilter(state, action) {
+      state.filters.priority = action.payload;
+    },
+    setStatusFilter(state, action) {
+      state.filters.status = action.payload;
+    },
+    resetFilters(state) {
+      state.filters = { serviceLine: 'all', priority: 'all', status: 'all' };
+    },
+    setSortBy(state, action) {
+      state.sort.by = action.payload;
+    },
+    toggleSortDir(state) {
+      state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+    },
+    setSortDir(state, action) {
+      state.sort.dir = action.payload === 'asc' ? 'asc' : 'desc';
+    },
+
+    // --- selection / UI helpers ---
     clearCreateState(state) {
       state.createStatus = 'idle';
       state.createError = null;
@@ -72,6 +112,11 @@ const enquirySlice = createSlice({
     },
     resetSystem(state) {
       state.system = initialState.system;
+    },
+    clearStatusUpdateState(state) {
+      state.statusUpdateStatus = 'idle';
+      state.statusUpdateError = null;
+      state.statusUpdateId = null;
     },
   },
   extraReducers: (builder) => {
@@ -134,7 +179,7 @@ const enquirySlice = createSlice({
         state.selectedError = action.payload ?? { message: 'Unknown error' };
       });
 
-    // --- fetch list (Phase 1, basic) ---
+    // --- fetch list (Phase 1 + Phase 5 filters/sort) ---
     builder
       .addCase(fetchEnquiries.pending, (state) => {
         state.listStatus = 'pending';
@@ -148,8 +193,49 @@ const enquirySlice = createSlice({
         state.listStatus = 'failed';
         state.listError = action.payload ?? { message: 'Unknown error' };
       });
+
+    // --- update status (Phase 5) ---
+    builder
+      .addCase(updateEnquiryStatus.pending, (state, action) => {
+        state.statusUpdateStatus = 'pending';
+        state.statusUpdateError = null;
+        state.statusUpdateId = action.meta.arg.id;
+      })
+      .addCase(updateEnquiryStatus.fulfilled, (state, action) => {
+        state.statusUpdateStatus = 'succeeded';
+        const updated = action.payload;
+        // Patch the matching queue item in-place.
+        state.items = state.items.map((e) => (e.id === updated.id ? updated : e));
+        // Patch the selected enquiry if it matches.
+        if (state.selectedId === updated.id) {
+          state.selected = updated;
+        }
+        // Clear the pending id after a short delay would be ideal, but to
+        // keep the slice simple we leave it; the UI clears via the
+        // clearStatusUpdateState action after showing feedback.
+        state.statusUpdateId = null;
+      })
+      .addCase(updateEnquiryStatus.rejected, (state, action) => {
+        state.statusUpdateStatus = 'failed';
+        state.statusUpdateError = action.payload ?? { message: 'Unknown error' };
+        state.statusUpdateId = null;
+      });
   },
 });
 
-export const { clearCreateState, setSelectedId, resetSelected, resetSystem } = enquirySlice.actions;
+export const {
+  clearCreateState,
+  setSelectedId,
+  resetSelected,
+  resetSystem,
+  setServiceLineFilter,
+  setPriorityFilter,
+  setStatusFilter,
+  resetFilters,
+  setSortBy,
+  toggleSortDir,
+  setSortDir,
+  clearStatusUpdateState,
+} = enquirySlice.actions;
+
 export default enquirySlice.reducer;

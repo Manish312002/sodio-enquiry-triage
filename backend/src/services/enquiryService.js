@@ -184,15 +184,149 @@ export async function getEnquiryById(id) {
 }
 
 /**
- * List recent enquiries (Phase 5 will add filters / sorting).
+ * List recent enquiries with optional filters + sorting.
+ *
+ * Phase 5 adds the filters required by FR-05 / Rules.md §9:
+ *   - serviceLine: 'all' | 'ai' | 'blockchain' | 'web' | 'mobile' | 'game' | 'other'
+ *   - priority:    'all' | 'high' | 'medium' | 'low'
+ *   - status:      'all' | 'new' | 'contacted' | 'qualified' | 'dropped'
+ *   - sort:        'priority' | 'receivedAt' (default: 'receivedAt')
+ *   - dir:         'asc' | 'desc' (default: 'desc')
+ *   - limit:       1..200 (default: 50)
+ *
+ * All filters are optional and validated by the controller (zod). The
+ * service layer applies them defensively — `all` / undefined values are
+ * skipped, and only known enum values are passed to MongoDB.
+ *
+ * `priority` is not a top-level field; it lives at `priority.level` on
+ * the document. We filter on that sub-path. Enquiries with no priority
+ * yet (extractionState != 'completed') have `priority.level = null` and
+ * are excluded when filtering by a specific level — they remain visible
+ * only under the 'all' filter (which is the desired behaviour: the
+ * operator wants to see pending/failed items in the default view).
+ *
+ * Sorting by priority uses the numeric `priority.score` field so that
+ * high (≥8) sorts above medium (4-7) above low (≤3). Items with null
+ * priority score are treated as the lowest possible value (-Infinity)
+ * so they sink to the bottom in descending order.
  *
  * @param {object} [opts]
+ * @param {string} [opts.serviceLine='all']
+ * @param {string} [opts.priority='all']
+ * @param {string} [opts.status='all']
+ * @param {string} [opts.sort='receivedAt']
+ * @param {string} [opts.dir='desc']
  * @param {number} [opts.limit=50]
- * @returns {Promise<import('../models/Enquiry.js').default[]>}
+ * @returns {Promise<object[]>}  Lean plain objects (no Mongoose methods).
  */
-export async function listEnquiries({ limit = 50 } = {}) {
+export async function listEnquiries({
+  serviceLine = 'all',
+  priority = 'all',
+  status = 'all',
+  sort = 'receivedAt',
+  dir = 'desc',
+  limit = 50,
+} = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
-  return Enquiry.find().sort({ receivedAt: -1 }).limit(safeLimit).lean().exec();
+  const query = {};
+
+  const SERVICE_LINES = ['ai', 'blockchain', 'web', 'mobile', 'game', 'other'];
+  if (typeof serviceLine === 'string' && SERVICE_LINES.includes(serviceLine)) {
+    query['effectiveExtraction.serviceLine'] = serviceLine;
+  }
+
+  const PRIORITIES = ['high', 'medium', 'low'];
+  if (typeof priority === 'string' && PRIORITIES.includes(priority)) {
+    query['priority.level'] = priority;
+  }
+
+  const STATUSES = ['new', 'contacted', 'qualified', 'dropped'];
+  if (typeof status === 'string' && STATUSES.includes(status)) {
+    query.status = status;
+  }
+
+  // Sort key. Priority sort uses priority.score so the order is high → med → low.
+  // receivedAt sort uses the immutable source timestamp (Rules.md §14).
+  const SORT_KEYS = ['priority', 'receivedAt'];
+  const safeSort = SORT_KEYS.includes(sort) ? sort : 'receivedAt';
+  const safeDir = dir === 'asc' ? 1 : -1;
+
+  let sortSpec;
+  if (safeSort === 'priority') {
+    // Secondary sort by receivedAt so equal-priority items have a stable order.
+    sortSpec = { 'priority.score': safeDir, receivedAt: safeDir };
+  } else {
+    sortSpec = { receivedAt: safeDir };
+  }
+
+  return Enquiry.find(query).sort(sortSpec).limit(safeLimit).lean().exec();
 }
 
-export default { createEnquiry, getEnquiryById, listEnquiries, MAX_ORIGINAL_TEXT_CHARS };
+/**
+ * Update the workflow status of an existing enquiry.
+ *
+ * Phase 5 — implements FR-08 "Status workflow":
+ *   new → contacted → qualified → dropped
+ *
+ * Rules.md §14: "Status changes are validated against allowed statuses."
+ * We do NOT enforce the linear order — the operator may move an enquiry
+ * directly from 'new' to 'dropped' (e.g. obvious spam) or revert from
+ * 'qualified' back to 'contacted'. The four enum values are the only
+ * allowed states; any other value is rejected with 400.
+ *
+ * This function does NOT touch:
+ *   - originalText / receivedAt (immutable, enforced at schema level)
+ *   - effectiveExtraction (Phase 6 owns field edits)
+ *   - humanOverrides (Phase 6 owns human corrections)
+ *   - priority (status is independent of priority score)
+ *   - extractionState (extraction is a separate concern)
+ *
+ * @param {string} id
+ * @param {string} status  Must be one of: new, contacted, qualified, dropped.
+ * @returns {Promise<import('../models/Enquiry.js').default>}  The updated enquiry.
+ * @throws {AppError} 400 if id is invalid or status is not in the allowed enum.
+ * @throws {AppError} 404 if enquiry not found.
+ */
+export async function updateEnquiryStatus(id, status) {
+  if (!id || !/^[a-fA-F0-9]{24}$/.test(String(id))) {
+    throw new AppError({
+      message: 'Invalid enquiry id.',
+      status: 400,
+      code: 'INVALID_ID',
+    });
+  }
+
+  const ALLOWED_STATUSES = ['new', 'contacted', 'qualified', 'dropped'];
+  if (!ALLOWED_STATUSES.includes(status)) {
+    throw new AppError({
+      message: `Invalid status. Allowed: ${ALLOWED_STATUSES.join(', ')}.`,
+      status: 400,
+      code: 'INVALID_STATUS',
+    });
+  }
+
+  const enquiry = await Enquiry.findById(id);
+  if (!enquiry) {
+    throw new AppError({
+      message: `Enquiry ${id} not found.`,
+      status: 404,
+      code: 'NOT_FOUND',
+    });
+  }
+
+  enquiry.status = status;
+  const saved = await enquiry.save();
+  logger.info('Enquiry status updated', {
+    id: String(saved._id),
+    status: saved.status,
+  });
+  return saved;
+}
+
+export default {
+  createEnquiry,
+  getEnquiryById,
+  listEnquiries,
+  updateEnquiryStatus,
+  MAX_ORIGINAL_TEXT_CHARS,
+};

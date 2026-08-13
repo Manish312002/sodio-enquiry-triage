@@ -6,6 +6,12 @@
  *   - fetchEnquiry(id)                          -> GET  /api/enquiries/:id
  *   - fetchEnquiries({ limit? })                -> GET  /api/enquiries
  *
+ * Phase 5 additions:
+ *   - fetchEnquiries({ serviceLine, priority, status, sort, dir, limit })
+ *       — query params are now passed to GET /api/enquiries (the backend
+ *         applies the filters + sort server-side).
+ *   - updateEnquiryStatus({ id, status })       -> PATCH /api/enquiries/:id/status
+ *
  * `fetchHealth` from Phase 0 is kept for the connectivity indicator.
  *
  * Architectural rules (Architechure.md §14):
@@ -62,7 +68,16 @@ export const fetchEnquiry = createAsyncThunk(
 );
 
 /**
- * @param {{ limit?: number }} [arg]
+ * Phase 5 — extended to pass filter + sort query params to the backend.
+ *
+ * @param {{
+ *   serviceLine?: 'all'|'ai'|'blockchain'|'web'|'mobile'|'game'|'other',
+ *   priority?:    'all'|'high'|'medium'|'low',
+ *   status?:      'all'|'new'|'contacted'|'qualified'|'dropped',
+ *   sort?:        'priority'|'receivedAt',
+ *   dir?:         'asc'|'desc',
+ *   limit?:       number,
+ * }} [arg]
  * @returns {Promise<{ enquiries: object[], count: number }>}
  */
 export const fetchEnquiries = createAsyncThunk(
@@ -71,8 +86,34 @@ export const fetchEnquiries = createAsyncThunk(
     try {
       const params = {};
       if (arg?.limit) params.limit = arg.limit;
+      if (arg?.serviceLine && arg.serviceLine !== 'all') params.serviceLine = arg.serviceLine;
+      if (arg?.priority && arg.priority !== 'all') params.priority = arg.priority;
+      if (arg?.status && arg.status !== 'all') params.status = arg.status;
+      if (arg?.sort) params.sort = arg.sort;
+      if (arg?.dir) params.dir = arg.dir;
       const { data } = await apiClient.get('/enquiries', { params });
       return data;
+    } catch (err) {
+      return rejectWithValue(normalizeError(err));
+    }
+  },
+);
+
+/**
+ * Phase 5 — update enquiry workflow status.
+ *
+ * @param {{ id: string, status: 'new'|'contacted'|'qualified'|'dropped' }} payload
+ * @returns {Promise<object>}  The updated enquiry response shape.
+ */
+export const updateEnquiryStatus = createAsyncThunk(
+  'enquiries/updateEnquiryStatus',
+  async (payload, { rejectWithValue }) => {
+    try {
+      const { data } = await apiClient.patch(
+        `/enquiries/${payload.id}/status`,
+        { status: payload.status },
+      );
+      return data.enquiry;
     } catch (err) {
       return rejectWithValue(normalizeError(err));
     }

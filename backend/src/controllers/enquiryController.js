@@ -48,6 +48,19 @@ const createEnquiryBodySchema = z
 const listEnquiriesQuerySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(200).optional(),
+    serviceLine: z
+      .enum(['all', 'ai', 'blockchain', 'web', 'mobile', 'game', 'other'])
+      .optional(),
+    priority: z.enum(['all', 'high', 'medium', 'low']).optional(),
+    status: z.enum(['all', 'new', 'contacted', 'qualified', 'dropped']).optional(),
+    sort: z.enum(['priority', 'receivedAt']).optional(),
+    dir: z.enum(['asc', 'desc']).optional(),
+  })
+  .strict();
+
+const updateStatusBodySchema = z
+  .object({
+    status: z.enum(['new', 'contacted', 'qualified', 'dropped']),
   })
   .strict();
 
@@ -105,10 +118,19 @@ export const getEnquiry = asyncHandler(async (req, res) => {
 /**
  * GET /api/enquiries
  *
- * 200 -> { enquiries: [<enquiry response shape>...], count: number }
+ * Phase 5 — supports query filters + sorting (FR-05):
+ *   ?serviceLine=web           filter by extracted service line
+ *   ?priority=high             filter by computed priority level
+ *   ?status=new                filter by workflow status
+ *   ?sort=priority|receivedAt  sort by priority score or received date
+ *   ?dir=asc|desc              sort direction (default desc)
+ *   ?limit=50                  1..200
  *
- * Phase 5 will add filters + sorting. For Phase 1 this just returns the most
- * recent records, lean — used by the console placeholder and for refresh tests.
+ * All filters accept 'all' (or omission) to skip. The response shape is
+ * stable across phases so the frontend contract does not break.
+ *
+ * 200 -> { enquiries: [<enquiry response shape>...], count: number }
+ * 400 on invalid query
  */
 export const listEnquiries = asyncHandler(async (req, res) => {
   const parsed = listEnquiriesQuerySchema.safeParse(req.query);
@@ -118,26 +140,53 @@ export const listEnquiries = asyncHandler(async (req, res) => {
       'Invalid query';
     throw new AppError({ message, status: 400, code: 'VALIDATION_ERROR' });
   }
-  const docs = await enquiryService.listEnquiries({ limit: parsed.data.limit });
-  // Map through toApiResponse-compatible shape. `docs` are lean objects so
-  // they don't have the instance method — we normalise here instead.
-  const enquiries = docs.map((o) => ({
-    id: String(o._id),
-    source: o.source,
-    originalText: o.originalText,
-    sender: o.sender ?? { name: null, email: null },
-    receivedAt: o.receivedAt,
-    status: o.status,
-    isGenuineProjectEnquiry: o.isGenuineProjectEnquiry ?? null,
-    effectiveExtraction: o.effectiveExtraction ?? null,
-    humanOverrides: o.humanOverrides ?? {},
-    priority: o.priority ?? { level: null, score: null, reasons: [] },
-    extractionState: o.extractionState,
-    batchId: o.batchId ? String(o.batchId) : null,
-    createdAt: o.createdAt,
-    updatedAt: o.updatedAt,
-  }));
+  const docs = await enquiryService.listEnquiries({
+    limit: parsed.data.limit,
+    serviceLine: parsed.data.serviceLine,
+    priority: parsed.data.priority,
+    status: parsed.data.status,
+    sort: parsed.data.sort,
+    dir: parsed.data.dir,
+  });
+  const enquiries = docs.map(toEnquiryResponseShape);
   res.status(200).json({ enquiries, count: enquiries.length });
+});
+
+/**
+ * PATCH /api/enquiries/:id/status
+ *
+ * Phase 5 — move an enquiry through the workflow:
+ *   new → contacted → qualified → dropped
+ *
+ * Body: { status: 'new' | 'contacted' | 'qualified' | 'dropped' }
+ *
+ * Rules.md §14: "Status changes are validated against allowed statuses."
+ * Linear order is NOT enforced — the operator may jump between any two
+ * allowed states. Unknown enum values are rejected with 400.
+ *
+ * This endpoint does NOT modify originalText / receivedAt / sender /
+ * effectiveExtraction / humanOverrides / priority / extractionState.
+ * Those concerns belong to other phases (Phase 6 owns field edits).
+ *
+ * 200 -> { enquiry: <updated enquiry response shape> }
+ * 400 on invalid id or invalid status
+ * 404 if enquiry not found
+ */
+export const updateStatus = asyncHandler(async (req, res) => {
+  const parsed = updateStatusBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    const message =
+      parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') ||
+      'Invalid request body';
+    throw new AppError({
+      message,
+      status: 400,
+      code: 'VALIDATION_ERROR',
+      context: { zodIssues: parsed.error.issues.length },
+    });
+  }
+  const saved = await enquiryService.updateEnquiryStatus(req.params.id, parsed.data.status);
+  res.status(200).json({ enquiry: saved.toApiResponse() });
 });
 
 /**
@@ -386,3 +435,31 @@ export const recalculatePriority = asyncHandler(async (req, res) => {
     priority,
   });
 });
+
+/**
+ * Map a lean Mongoose plain object (from .lean()) into the same response
+ * shape produced by Enquiry.prototype.toApiResponse(). `listEnquiries`
+ * uses .lean() for performance, so the instance method is unavailable
+ * there — this helper keeps the response shape stable across endpoints.
+ *
+ * @param {object} o  Lean document from Mongoose.
+ * @returns {object}  API response shape (matches toApiResponse).
+ */
+function toEnquiryResponseShape(o) {
+  return {
+    id: String(o._id),
+    source: o.source,
+    originalText: o.originalText,
+    sender: o.sender ?? { name: null, email: null },
+    receivedAt: o.receivedAt,
+    status: o.status,
+    isGenuineProjectEnquiry: o.isGenuineProjectEnquiry ?? null,
+    effectiveExtraction: o.effectiveExtraction ?? null,
+    humanOverrides: o.humanOverrides ?? {},
+    priority: o.priority ?? { level: null, score: null, reasons: [] },
+    extractionState: o.extractionState,
+    batchId: o.batchId ? String(o.batchId) : null,
+    createdAt: o.createdAt,
+    updatedAt: o.updatedAt,
+  };
+}
