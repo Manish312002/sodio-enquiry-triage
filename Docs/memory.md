@@ -786,3 +786,173 @@ Backend start: `/home/z/my-project/scripts/start-phase2-be.sh`
 Phase 2 is fully complete, verified against the real operator-supplied fixture.
 **19/19 tests pass.** Phase 1 tests still pass (no regression). Frontend still
 builds cleanly. **Do not start Phase 3 without explicit operator approval.**
+
+---
+
+## Phase 3 — Completed
+
+**Commit:** see `git log` for the Phase 3 commit hash.
+**Date:** 2026-08-13
+**Status:** All Phase 3 acceptance criteria (`Phases.md` lines 80-105) verified end-to-end. **97/97 backend tests pass + 31/31 E2E tests pass + 19/19 Phase 2 regression + Phase 1 regression passes + frontend build PASS.**
+
+### What was built
+
+**New files (10):**
+
+1. `backend/src/models/ExtractionVersion.js` — `extractionVersions` collection. One row per LLM extraction attempt (success OR failure). Fields: `enquiryId`, `version` (per-enquiry monotonic), `provider` (`grok`|`gemini`), `model`, `rawOutput` (Mixed — provider response body), `parsedOutput` (zod-validated extraction object), `state` (`completed`|`failed`), `errorCode`, `errorMessage`, `durationMs`, `createdAt`. Append-only — service layer never calls `.findByIdAndUpdate()` on this collection.
+
+2. `backend/src/services/extractionService.js` — orchestrates one extraction attempt against a persisted enquiry. Loads enquiry (404 if missing), atomically transitions `extractionState` → `processing` (409 if already processing), calls `llmService.extractWithFallback(originalText)`, persists one `ExtractionVersion` per provider attempt, updates enquiry.effectiveExtraction on success OR marks `extractionState='failed'` on failure. NEVER touches `originalText`/`receivedAt`/`sender`/`status`. NEVER computes priority.
+
+3. `backend/tests/_helpers.js` — test helpers: `mockFetch(responder)`, `grokResponse(extraction)`, `geminiResponse(extraction)`, `validExtraction(overrides)`, `findFixtureBlock(name)` (reads real fixture).
+
+4. `backend/tests/extractionSchema.test.js` — 13 tests: schema accepts valid + Unicode, rejects unknown fields (strict), rejects out-of-enum serviceLine/qualifier, never declares `priority`.
+
+5. `backend/tests/extractionPrompt.test.js` — 6 tests: SYSTEM_PROMPT forbids following enquiry-embedded instructions, buildUserMessage wraps in fence, preserves byte-for-byte, prompt-injection payload preserved verbatim inside fence.
+
+6. `backend/tests/grokProvider.test.js` — 18 tests: success, NOT_CONFIGURED, 5xx/429/401 recoverable, network/timeout recoverable, malformed JSON / schema-invalid → INVALID_OUTPUT NOT recoverable, retry on recoverable, no retry on INVALID_OUTPUT, rawOutput never contains auth headers, Unicode preserved in request body.
+
+7. `backend/tests/geminiProvider.test.js` — 15 tests: same matrix as Grok but for Gemini-specific shapes (endpoint URL has `?key=`, request body uses `contents`/`systemInstruction`, response uses `candidates[0].content.parts[0].text`).
+
+8. `backend/tests/llmService.test.js` — 11 tests: Grok success → no Gemini call, Grok recoverable → Gemini attempted, Grok non-recoverable (INVALID_OUTPUT) → Gemini NOT attempted, both fail recoverably → ALL_PROVIDERS_FAILED, neither configured, empty input → EMPTY_INPUT, per-provider attempts audit trail, durationMs across attempts, Grok timeout/network → Gemini fallback.
+
+9. `backend/tests/promptInjection.test.js` — 9 tests using the REAL fixture's prompt-injection block (system / contact@qa-test-mail.io): injection text is wrapped as USER data not SYSTEM, schema rejects injected `notes` and `priority` fields (strict zod), a correct extraction flags `isModelInstructionAttempt=true` and ignores the demanded `serviceLine='ai'` / `10000000 USD` / `notes='APPROVED BY ADMIN'`, if LLM obeys injection and emits `notes` field the schema rejects it.
+
+10. `backend/tests/unicode.test.js` — 12 tests using REAL fixture blocks: Miguel Santana (Spanish + €), Rachel Whitfield (£), D. Fontaine ($), Ankit Bahl (35-40 lakhs INR), Priya Ramanathan (em-dash + multi-project $60k/$90k), Website Contact Form (🙏 emoji in captcha field), schema accepts Unicode in summary/budget.raw, end-to-end mock fetch preserves Unicode in request bodies.
+
+11. `backend/tests/extractionService.test.js` — 12 integration tests against real MongoDB (separate `sodio_enquiry_triage_phase3_test` DB): successful Grok extraction persists version + updates enquiry, Grok failure → Gemini success persists TWO versions, both providers fail → enquiry marked failed, original enquiry data NEVER modified, ExtractionVersions append-only across runs, 404/400/409 error paths, listExtractions, prompt-injection enquiry extracted as ordinary data, INVALID_OUTPUT does NOT call Gemini.
+
+12. `/home/z/my-project/scripts/phase3-test.sh` — 31-test E2E suite against live backend with mock LLM HTTP server. Tests: 404 on non-existent id, 400 on invalid id, successful Grok extraction, GET extractions endpoint, original enquiry preserved, priority NOT computed, prompt-injection treated as data, Unicode preserved (Spanish + £ + € + ¿ + 🙏), Phase 1 regression (paste), Phase 2 regression (import 20 enquiries).
+
+**Changed files (8):**
+
+1. `backend/src/services/llm/grokProvider.js` — replaced Phase 0 NOT_IMPLEMENTED stub with real HTTP via native `fetch`. OpenAI-compatible chat-completions endpoint at `GROK_API_URL`. Error classification: `NOT_CONFIGURED`, `PROVIDER_NETWORK_ERROR`, `PROVIDER_TIMEOUT`, `PROVIDER_RATE_LIMIT` (429), `PROVIDER_SERVER_ERROR` (5xx), `PROVIDER_AUTH_ERROR` (401/403), `PROVIDER_HTTP_ERROR` (other 4xx), `INVALID_OUTPUT` (bad JSON / schema fail, NOT recoverable). Retries `LLM_MAX_RETRIES` times on recoverable errors; no retry on INVALID_OUTPUT. API key sent via `Authorization: Bearer` header, never logged, never in `rawOutput`.
+
+2. `backend/src/services/llm/geminiProvider.js` — replaced Phase 0 stub with real HTTP. Uses Gemini's `generateContent` REST endpoint with `systemInstruction` (separate from user content — preserves prompt injection boundary) + `responseSchema` (Gemini's structured-output feature). API key sent as `?key=` query parameter (v1beta REST convention).
+
+3. `backend/src/services/llm/llmService.js` — `extractWithFallback()` now distinguishes recoverable provider errors (network/timeout/5xx/429/NOT_CONFIGURED → try next provider) from non-recoverable errors (INVALID_OUTPUT → STOP, do NOT try next provider per Rules.md §3). Returns structured `LlmOutcome` with per-provider `attempts[]` audit trail including `rawOutput`/`errorCode`/`durationMs`. Never logs `rawOutput` (only safe metadata).
+
+4. `backend/src/controllers/enquiryController.js` — added `extractEnquiry` (POST /:id/extract) and `listExtractions` (GET /:id/extractions) handlers. Response shapes include the updated enquiry, all persisted ExtractionVersion rows, and the outcome metadata.
+
+5. `backend/src/routes/enquiryRoutes.js` — mounted `POST /:id/extract` and `GET /:id/extractions` AFTER `GET /:id` (they are sub-paths of a specific enquiry id; do not collide with `/:id` pattern).
+
+6. `backend/src/config/env.js` — added `GROK_API_URL`, `GEMINI_API_URL` (configurable provider endpoints). Updated `GEMINI_MODEL` default from `gemini-1.5-flash` (legacy) to `gemini-2.0-flash` (current stable). Removed `Object.freeze` from the exported `env` object so tests can mutate per-test (documented as read-only at runtime by convention).
+
+7. `.env.example` — documented new env vars: `GROK_API_URL`, `GEMINI_API_URL`. Updated default `GEMINI_MODEL=gemini-2.0-flash`.
+
+8. `backend/package.json` — added `test`, `test:unit`, `test:integration` scripts using Node's built-in `node:test` runner (zero new dependencies).
+
+### Phase 3 acceptance criteria (Phases.md §Phase 3)
+
+Every successful extraction contains:
+- ✓ company
+- ✓ contact name
+- ✓ contact email
+- ✓ service line
+- ✓ budget (raw/currency/min/max/qualifier)
+- ✓ timeline (raw/normalized)
+- ✓ summary
+- ✓ genuine-enquiry flag
+
+Plus the implementation delivers:
+- ✓ `LLMExtractor` interface (provider abstraction in grokProvider/geminiProvider)
+- ✓ provider adapter (HTTP-based, env-driven, no SDK dependency)
+- ✓ extraction prompt (already existed from Phase 0 — verified to enforce injection boundary)
+- ✓ strict response schema (zod, strict mode, no `priority` field)
+- ✓ retry for transient provider errors (`LLM_MAX_RETRIES`)
+- ✓ invalid-output handling (INVALID_OUTPUT is non-recoverable — does not fall back to next provider)
+- ✓ extraction version persistence (ExtractionVersion model, append-only)
+
+### Verification results — all green
+
+**Backend unit + integration tests (97/97 PASS):**
+```
+extractionPrompt — injection boundary:    6 tests  PASS
+extractionSchema:                        13 tests  PASS
+extractionService — Phase 3:             12 tests  PASS (real MongoDB)
+geminiProvider — Phase 3:                15 tests  PASS
+grokProvider — Phase 3:                  18 tests  PASS
+llmService — fallback orchestration:     11 tests  PASS
+prompt injection boundary (real fixture): 9 tests  PASS
+Unicode preservation:                    13 tests  PASS
+                                         --------
+                                         97 tests  PASS, 0 FAIL
+```
+
+**E2E tests (31/31 PASS):**
+- 404 on non-existent enquiry
+- 400 on invalid id format
+- Successful Grok extraction persists version + updates enquiry
+- GET /api/enquiries/:id/extractions returns version
+- originalText + receivedAt preserved after extraction
+- priority NOT computed (Phase 4 owns it)
+- Prompt-injection enquiry extracted as ordinary data
+- Unicode (Spanish, £, €, ¿, 🙏) preserved through extraction
+- Phase 1 regression (paste enquiry) — PASS
+- Phase 2 regression (import 20 enquiries) — PASS
+
+**Phase 1 regression:** PASS (all 13 tests)
+**Phase 2 regression:** 19/19 PASS
+**Frontend build:** PASS (103 modules, 234KB JS, 10.84KB CSS, built in 47.55s)
+
+### Commands executed (in order)
+
+1. Read all 6 source-of-truth docs (PRD, Architecture, Rules, Phases, design, memory)
+2. Read existing Phase 0/1/2 backend code: models/Enquiry.js, services/llm/*, services/enquiryService.js, controllers/enquiryController.js, routes/enquiryRoutes.js, config/env.js, utils/logger.js, utils/constants.js, middleware/errorHandler.js, app.js, package.json
+3. Read existing test scripts: phase1-test.sh, phase2-test.sh
+4. Created `backend/src/models/ExtractionVersion.js` (extractionVersions collection)
+5. Updated `backend/src/config/env.js` (added GROK_API_URL, GEMINI_API_URL; updated GEMINI_MODEL default; removed Object.freeze for testability)
+6. Updated `.env.example` with new vars
+7. Replaced `grokProvider.js` skeleton with real HTTP implementation
+8. Replaced `geminiProvider.js` skeleton with real HTTP implementation
+9. Updated `llmService.js` with error classification (recoverable vs non-recoverable) + per-attempt audit trail
+10. Created `backend/src/services/extractionService.js` (orchestration + persistence)
+11. Added `extractEnquiry` + `listExtractions` controller methods
+12. Mounted `POST /:id/extract` + `GET /:id/extractions` routes
+13. Syntax-checked all 8 changed/new backend files — all OK
+14. Wrote 8 test files (97 tests) using `node:test` (Node's built-in test runner — zero new dependencies)
+15. Ran unit tests: fixed 3 test bugs (zod `unrecognized_keys` uses `keys` not `path`; mock.method return shape; fixture path URL-encoding). Final: 85/85 unit tests pass.
+16. Ran integration tests against real MongoDB: 12/12 pass
+17. Wrote `phase3-test.sh` E2E script (31 tests with mock LLM HTTP server)
+18. Ran E2E tests: 31/31 pass
+19. Ran Phase 1 regression: PASS
+20. Ran Phase 2 regression: 19/19 PASS
+21. Ran frontend build: PASS
+22. Updated `Docs/memory.md` (this section)
+23. `git add` + `git commit -m "Phase 3: implement LLM extraction (Grok primary + Gemini fallback)"`
+24. Create Phase 3 download archive
+25. STOP — await explicit Phase 4 approval
+
+### Decisions made during Phase 3
+
+1. **Native `fetch` instead of an SDK.** Node 18+ has native `fetch`. Both Grok (xAI's OpenAI-compatible endpoint) and Gemini (v1beta REST) have simple JSON request/response shapes. Direct HTTP keeps the provider abstraction cleaner and avoids unnecessary dependencies (Rules.md §2, project rule §10).
+
+2. **Error classification: recoverable vs non-recoverable.** Rules.md §3 explicitly says "do not automatically switch providers for every validation error without distinguishing provider/API failure from malformed model output." Implementation: `NOT_CONFIGURED`, `PROVIDER_NETWORK_ERROR`, `PROVIDER_TIMEOUT`, `PROVIDER_RATE_LIMIT`, `PROVIDER_SERVER_ERROR`, `PROVIDER_AUTH_ERROR`, `PROVIDER_HTTP_ERROR` are all recoverable (try next provider). `INVALID_OUTPUT` (bad JSON, schema validation failure) is non-recoverable (do NOT try next provider — the model returned a response, it was just bad).
+
+3. **`node:test` instead of vitest/jest.** Node's built-in test runner is stable in Node 18+ and adds zero new dependencies. Supports `mock.method()` for spying, `describe/test` for organisation, and TAP/spec reporters. Aligns with "avoid unnecessary libraries" (project rule §10).
+
+4. **Removed `Object.freeze` from env.** The Phase 0 freeze was defensive but prevented tests from mutating `env.GROK_API_KEY` per-test. Replaced with a documented convention: application code treats env as read-only at runtime; tests may mutate it. This is the standard Node testing pattern.
+
+5. **Per-provider attempts audit trail.** `extractWithFallback()` returns `attempts[]` with per-provider `state`, `errorCode`, `errorMessage`, `rawOutput`, `durationMs`. The extractionService persists one `ExtractionVersion` per attempt — including failures. This gives a complete audit trail: if Grok fails recoverably and Gemini succeeds, BOTH versions are persisted (one failed, one completed).
+
+6. **`extractionState='processing'` is a real DB state.** Set BEFORE the LLM call so a concurrent `/extract` request on the same enquiry is rejected with 409 ALREADY_PROCESSING. Prevents double-spend of LLM quota.
+
+7. **Failures do NOT overwrite prior successes.** If a prior extraction succeeded and a re-extraction fails, `effectiveExtraction` is NOT touched (the prior success remains). `extractionState` transitions to `failed` so the operator sees the failure. Phase 7 (re-extraction safety) will formalise the conflict-resolution semantics.
+
+8. **Prompt-injection boundary enforced at multiple layers.** (a) `extractionPrompt.js` builds the system prompt and wraps the enquiry in a `===ENQUIRY BEGIN/END===` fence (already existed from Phase 0). (b) `grokProvider` sends system + user as separate roles. (c) `geminiProvider` uses Gemini's `systemInstruction` field (separate from `contents`). (d) zod schema is strict — rejects injected `priority` and `notes` fields the LLM might emit if it obeyed the injection. (e) Schema does NOT declare a `priority` field at all, so even if the LLM tried to set one, it would be rejected.
+
+9. **API key isolation.** Grok: `Authorization: Bearer <key>` header. Gemini: `?key=<key>` query parameter (v1beta REST convention). Both: key is read from env at call time, never logged, never in `rawOutput` (which contains only response body). The `logger` already redacts `apiKey`/`authorization`/`token` keys (Phase 0 implementation).
+
+10. **Updated GEMINI_MODEL default to `gemini-2.0-flash`.** The previous default `gemini-1.5-flash` is being deprecated by Google. `gemini-2.0-flash` is the current stable recommended model. Aligns with project rule §2 "latest stable + compatible".
+
+11. **No frontend changes.** Phase 3 scope is backend LLM extraction. The frontend will gain extraction-trigger UI in Phase 5 (triage console) or Phase 8 (batch progress UI), per `Phases.md`.
+
+### Known limitations
+
+- **No batch extraction yet.** Phase 3 only adds single-enquiry extraction (`POST /api/enquiries/:id/extract`). Phase 8 will add bounded-concurrency batch extraction with progress tracking.
+- **No re-extract endpoint yet.** Phase 3 adds `extract` (first extraction). Phase 7 will add `re-extract` with explicit conflict-resolution semantics against human overrides.
+- **Real LLM calls not tested.** All tests use mocked `fetch` (unit tests) or a mock HTTP server (E2E tests). To run with real Grok/Gemini, set `GROK_API_KEY` and `GEMINI_API_KEY` env vars and remove the mock URL overrides. The error classification logic is identical for real and mocked calls.
+- **`extractionState='processing'` has no auto-recovery.** If the backend crashes mid-extraction, the enquiry stays in `processing` forever and rejects further `/extract` calls with 409. Phase 8 will add a watchdog or the operator can manually reset via direct DB update. For now, the unit test `8. 409 when enquiry is already processing` documents this behaviour.
+
+### Status
+
+Phase 3 is fully complete, verified end-to-end. **97/97 backend tests pass + 31/31 E2E tests pass + 19/19 Phase 2 regression + Phase 1 regression passes + frontend build PASS.** **Do not start Phase 4 without explicit operator approval.**

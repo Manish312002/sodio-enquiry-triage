@@ -9,11 +9,16 @@
  * Phase 2 endpoint:
  *   POST /api/enquiries/import  parse a sample-enquiries file and persist records
  *
+ * Phase 3 endpoints:
+ *   POST /api/enquiries/:id/extract       trigger LLM extraction for one enquiry
+ *   GET  /api/enquiries/:id/extractions   list extraction versions for one enquiry
+ *
  * Later phases add: PATCH, re-extract, list extractions. Each has its own
  * controller method (added in this file when its phase lands).
  */
 import { z } from 'zod';
 import * as enquiryService from '../services/enquiryService.js';
+import * as extractionService from '../services/extractionService.js';
 import { parseEnquiryFile, MAX_FILE_SIZE_BYTES } from '../services/parserService.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
@@ -251,4 +256,92 @@ export const importEnquiries = asyncHandler(async (req, res) => {
       warnings: parsed.warnings,
     },
   });
+});
+
+/**
+ * POST /api/enquiries/:id/extract
+ *
+ * Phase 3 — trigger LLM extraction for one persisted enquiry.
+ *
+ * Flow (Architechure.md §5):
+ *   - Load enquiry (404 if not found).
+ *   - Refuse if already 'processing' (409).
+ *   - Call llmService.extractWithFallback(originalText):
+ *       Grok → success → persist version, update effectiveExtraction
+ *       Grok recoverable failure → Gemini → success/failure
+ *       Grok non-recoverable failure (INVALID_OUTPUT) → do NOT try Gemini
+ *   - Persist one ExtractionVersion per provider attempt (success AND failure).
+ *   - On success: extractionState='completed', effectiveExtraction updated.
+ *   - On failure: extractionState='failed', effectiveExtraction untouched.
+ *   - originalText, receivedAt, sender, status are NEVER modified.
+ *
+ * Response (200):
+ *   {
+ *     enquiry:    <updated enquiry response shape>,
+ *     versions:   [<extraction version response shape>, ...],
+ *     outcome:    { state, provider, model, errorCode, errorMessage, durationMs }
+ *   }
+ *
+ * Note: Phase 7 will add a separate `POST /api/enquiries/:id/re-extract`
+ * endpoint with explicit conflict-resolution semantics against human
+ * overrides. Phase 3's `extract` is the simpler "first extraction" path.
+ */
+export const extractEnquiry = asyncHandler(async (req, res) => {
+  const { enquiry, versions, outcome } = await extractionService.runExtraction(
+    req.params.id,
+  );
+
+  res.status(200).json({
+    enquiry: enquiry.toApiResponse(),
+    versions: versions.map((v) => v.toApiResponse()),
+    outcome: {
+      state: outcome.state,
+      provider: outcome.provider,
+      model: outcome.model,
+      errorCode: outcome.errorCode,
+      errorMessage: outcome.errorMessage,
+      durationMs: outcome.durationMs,
+      attempts: outcome.attempts.map((a) => ({
+        provider: a.provider,
+        model: a.model,
+        state: a.state,
+        errorCode: a.errorCode,
+        errorMessage: a.errorMessage,
+        durationMs: a.durationMs,
+      })),
+    },
+  });
+});
+
+/**
+ * GET /api/enquiries/:id/extractions
+ *
+ * Phase 3 — list all extraction versions for an enquiry, ordered by version.
+ *
+ * Response (200):
+ *   {
+ *     extractions: [<extraction version response shape>, ...],
+ *     count: number
+ *   }
+ *
+ * This endpoint exposes the audit trail so the operator (and Phase 7's
+ * re-extraction conflict UI) can inspect what each provider returned.
+ */
+export const listExtractions = asyncHandler(async (req, res) => {
+  const docs = await extractionService.listExtractions(req.params.id);
+  const extractions = docs.map((o) => ({
+    id: String(o._id),
+    enquiryId: String(o.enquiryId),
+    version: o.version,
+    provider: o.provider,
+    model: o.model,
+    rawOutput: o.rawOutput ?? null,
+    parsedOutput: o.parsedOutput ?? null,
+    state: o.state,
+    errorCode: o.errorCode ?? null,
+    errorMessage: o.errorMessage ?? null,
+    durationMs: o.durationMs ?? null,
+    createdAt: o.createdAt,
+  }));
+  res.status(200).json({ extractions, count: extractions.length });
 });
