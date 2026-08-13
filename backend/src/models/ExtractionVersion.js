@@ -12,9 +12,9 @@
  *   the operator can inspect what went wrong without losing the audit trail.
  *
  * Phase 3 scope:
- *   - One ExtractionVersion per extraction attempt (Grok or Gemini).
- *   - If Grok fails recoverably and Gemini succeeds, BOTH versions are
- *     persisted: one failed (grok) + one completed (gemini).
+ *   - One ExtractionVersion per extraction attempt (Groq or Gemini).
+ *   - If Groq fails recoverably and Gemini succeeds, BOTH versions are
+ *     persisted: one failed (groq) + one completed (gemini).
  *   - `parsedOutput` is the zod-validated extraction object (or null on
  *     failure). `rawOutput` is whatever the provider returned before
  *     validation (string body, parsed JSON, or error payload).
@@ -99,7 +99,7 @@ const extractionVersionSchema = new Schema(
 
     provider: {
       type: String,
-      enum: ['grok', 'gemini'],
+      enum: ['groq', 'gemini'],
       required: true,
     },
 

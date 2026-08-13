@@ -14,6 +14,13 @@
  * may mutate it per-test to exercise configured / not-configured paths
  * without re-importing modules. The previous `Object.freeze` made this
  * impossible because mock attempts threw "Cannot assign to read only property".
+ *
+ * Phase 3 SDK migration: provider vars renamed from GROK_* to GROQ_* (the
+ * primary provider is now Groq, not xAI/Grok). Both providers use official
+ * SDKs (`openai` and `@google/genai`) so the provider endpoint URLs are
+ * no longer configurable — they're baked into the SDK defaults
+ * (https://api.groq.com/openai/v1 for Groq via the OpenAI SDK's baseURL,
+ * and the Gemini SDK's default endpoint).
  */
 import dotenv from 'dotenv';
 import { z } from 'zod';
@@ -28,27 +35,28 @@ const schema = z.object({
     .string()
     .min(1, 'MONGODB_URI must be set (see .env.example)'),
 
-  // LLM provider keys — Phase 3 makes real HTTP calls when keys are present.
-  // Empty string means "not configured" → provider is skipped (NOT a failure).
-  GROK_API_KEY: z.string().default(''),
-  GROK_MODEL: z.string().default('grok-2-latest'),
-  GROK_API_URL: z
+  // --- Groq (primary) ---
+  // Uses the official `openai` npm package pointed at Groq's OpenAI-compatible
+  // endpoint. GROQ_BASE_URL is configurable (defaults to the documented
+  // Groq endpoint) so tests can point at a mock HTTP server.
+  GROQ_API_KEY: z.string().default(''),
+  GROQ_MODEL: z.string().default('openai/gpt-oss-20b'),
+  GROQ_BASE_URL: z
     .string()
     .url()
-    .default('https://api.x.ai/v1/chat/completions'),
+    .default('https://api.groq.com/openai/v1'),
 
+  // --- Gemini (fallback) ---
+  // Uses the official `@google/genai` SDK. The SDK constructor handles
+  // the endpoint URL internally; we only need the API key + model name.
   GEMINI_API_KEY: z.string().default(''),
-  GEMINI_MODEL: z.string().default('gemini-2.0-flash'),
-  GEMINI_API_URL: z
-    .string()
-    .url()
-    .default('https://generativelanguage.googleapis.com/v1beta'),
+  GEMINI_MODEL: z.string().default('gemini-3.6-flash'),
 
-  // LLM behaviour
+  // --- LLM behaviour ---
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LLM_MAX_RETRIES: z.coerce.number().int().min(0).default(1),
 
-  // Batch processing
+  // --- Batch processing ---
   BATCH_CONCURRENCY: z.coerce.number().int().positive().default(3),
 });
 
@@ -67,12 +75,11 @@ if (!parsed.success) {
  * @property {'development'|'test'|'production'} NODE_ENV
  * @property {number} PORT
  * @property {string} MONGODB_URI
- * @property {string} GROK_API_KEY
- * @property {string} GROK_MODEL
- * @property {string} GROK_API_URL
+ * @property {string} GROQ_API_KEY
+ * @property {string} GROQ_MODEL
+ * @property {string} GROQ_BASE_URL
  * @property {string} GEMINI_API_KEY
  * @property {string} GEMINI_MODEL
- * @property {string} GEMINI_API_URL
  * @property {number} LLM_TIMEOUT_MS
  * @property {number} LLM_MAX_RETRIES
  * @property {number} BATCH_CONCURRENCY

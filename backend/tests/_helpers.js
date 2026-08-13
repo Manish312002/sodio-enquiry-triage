@@ -1,20 +1,25 @@
 /**
  * Shared test helpers for Phase 3 tests.
  *
- * - `mockFetch(responder)` patches global.fetch for the duration of a test
- *   and restores it in afterEach. The responder is a function that takes
- *   (url, init) and returns `{ status, body }` or throws.
+ * - `mockOpenAIResponses(responder)` patches the `openai` package's
+ *   `client.responses.create` method using `node:test`'s mock capabilities.
  *
- * - `captureLog()` patches the logger's underlying console.log/error so we
- *   can assert on log output without polluting test output.
+ * - `mockGeminiInteractions(responder)` patches the `@google/genai`
+ *   package's `Interactions.prototype.create` method.
  *
  * - `loadFixtureBlock(name)` reads a single enquiry block from the real
  *   sample-enquiries.txt fixture so tests use real operator data, not
  *   invented strings.
+ *
+ * Mocking strategy: we mock at the SDK method level (not at the `fetch`
+ * level). This makes tests independent of the SDK's internal HTTP
+ * implementation and lets us test our provider adapters' SDK-usage
+ * patterns directly.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { mock } from 'node:test';
+import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 
 const FIXTURE_PATH = fileURLToPath(
   new URL('../../test-data/sample-enquiries.txt', import.meta.url),
@@ -26,8 +31,6 @@ const FIXTURE_PATH = fileURLToPath(
  */
 export function readFixtureBlocks() {
   const text = readFileSync(FIXTURE_PATH, 'utf-8');
-  // Split on 80-dash separators (the real fixture uses exactly 80 dashes).
-  // The first chunk is the preamble ("SAMPLE ENQUIRIES — Sodio Task").
   const parts = text.split(/^-{3,}[ \t]*\r?\n/m);
   return parts
     .map((p) => p.trim())
@@ -64,74 +67,96 @@ export function findFixtureBlock(name) {
 }
 
 /**
- * Patch global.fetch with a responder for the duration of a test.
+ * Patch `OpenAI.Responses.prototype.create` with a responder.
  *
- * @param {(url: string, init: object) => Promise<{status: number, body: unknown}> | {status: number, body: unknown}} responder
- * @returns {{restore: () => void, calls: Array<{url: string, init: object}>}}
+ * The responder is called with the request params (the object passed to
+ * `client.responses.create()`) and returns either:
+ *   - an object with `output_text` (string) — simulates a 2xx success
+ *   - an Error to throw — simulates a provider failure
+ *
+ * @param {(params: object) => {output_text: string} | Promise<{output_text: string}>} responder
+ * @returns {{restore: () => void, calls: Array<{params: object}>}}
  */
-export function mockFetch(responder) {
+export function mockOpenAIResponses(responder) {
   const calls = [];
-  const fn = async (url, init) => {
-    const callRecord = { url: String(url), init };
-    calls.push(callRecord);
-    const result = await responder(String(url), init);
-    const status = result.status ?? 200;
-    const bodyText =
-      typeof result.body === 'string'
-        ? result.body
-        : JSON.stringify(result.body ?? {});
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      text: async () => bodyText,
-      json: async () => JSON.parse(bodyText),
-    };
+  const original = OpenAI.Responses.prototype.create;
+  OpenAI.Responses.prototype.create = async function (params) {
+    calls.push({ params });
+    const result = await responder(params);
+    if (result instanceof Error) throw result;
+    return result;
   };
-  const m = mock.method(globalThis, 'fetch', fn);
   return {
-    restore: () => m.mock.restore(),
+    restore: () => {
+      OpenAI.Responses.prototype.create = original;
+    },
     get calls() {
-      // Also clear our local `calls` array on restore so subsequent tests
-      // don't see stale data.
       return calls;
     },
   };
 }
 
 /**
- * Build a valid Grok-shaped response body.
- * @param {object} extraction
+ * Patch the Gemini SDK's `Interactions.prototype.create` with a responder.
+ *
+ * We discover the Interactions prototype by constructing a throwaway
+ * GoogleGenAI instance and grabbing `Object.getPrototypeOf(ai.interactions)`.
+ *
+ * @param {(params: object) => {output_text: string} | Promise<{output_text: string}>} responder
+ * @returns {{restore: () => void, calls: Array<{params: object}>}}
  */
-export function grokResponse(extraction) {
+export function mockGeminiInteractions(responder) {
+  const calls = [];
+  const fakeAi = new GoogleGenAI({ apiKey: 'fake' });
+  const InteractionsProto = Object.getPrototypeOf(fakeAi.interactions);
+  const original = InteractionsProto.create;
+  InteractionsProto.create = async function (params) {
+    calls.push({ params });
+    const result = await responder(params);
+    if (result instanceof Error) throw result;
+    return result;
+  };
   return {
-    id: 'chatcmpl-test',
-    object: 'chat.completion',
-    choices: [
-      {
-        message: { role: 'assistant', content: JSON.stringify(extraction) },
-        finish_reason: 'stop',
-      },
-    ],
-    usage: { prompt_tokens: 100, completion_tokens: 50 },
+    restore: () => {
+      InteractionsProto.create = original;
+    },
+    get calls() {
+      return calls;
+    },
   };
 }
 
 /**
- * Build a valid Gemini-shaped response body.
+ * Build a valid Groq/OpenAI Responses-API-shaped response object.
+ * The SDK exposes `response.output_text` as a top-level string property.
+ *
+ * @param {object} extraction  The extraction object to be JSON-stringified
+ *                             and returned as `output_text`.
+ */
+export function groqResponse(extraction) {
+  return {
+    id: 'resp_test',
+    object: 'response',
+    model: 'openai/gpt-oss-20b',
+    output_text: JSON.stringify(extraction),
+    output: [],
+    usage: { input_tokens: 100, output_tokens: 50 },
+  };
+}
+
+/**
+ * Build a valid Gemini Interactions-API-shaped response object.
+ * The SDK exposes `interaction.output_text` as a top-level string property.
+ *
  * @param {object} extraction
  */
 export function geminiResponse(extraction) {
   return {
-    candidates: [
-      {
-        content: {
-          parts: [{ text: JSON.stringify(extraction) }],
-          role: 'model',
-        },
-        finishReason: 'STOP',
-      },
-    ],
-    usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50 },
+    id: 'interaction_test',
+    model: 'gemini-3.6-flash',
+    status: 'COMPLETED',
+    output_text: JSON.stringify(extraction),
+    usage: { promptTokenCount: 100, candidatesTokenCount: 50 },
   };
 }
 

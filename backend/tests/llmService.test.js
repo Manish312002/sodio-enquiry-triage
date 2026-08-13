@@ -1,159 +1,157 @@
 /**
- * Test: llmService — fallback orchestration
+ * Test: llmService — fallback orchestration (Groq → Gemini)
  *
  * Covers the core Phase 3 contract (Rules.md §3):
- *   1. Grok success → no Gemini call.
- *   2. Grok recoverable failure → Gemini is attempted.
- *   3. Grok success after retry → no Gemini call.
- *   4. Grok non-recoverable (INVALID_OUTPUT) → Gemini is NOT attempted.
- *   5. Both providers fail recoverably → ALL_PROVIDERS_FAILED.
- *   6. Both not configured → ALL_PROVIDERS_FAILED.
- *   7. Empty input → EMPTY_INPUT.
- *   8. Per-provider attempts audit trail is preserved.
- *   9. Total durationMs is the wall-clock across all attempts.
+ *   1. Groq success → no Gemini call.
+ *   2. Groq recoverable failure → Gemini is attempted.
+ *   3. Groq non-recoverable (INVALID_OUTPUT) → Gemini is NOT attempted.
+ *   4. Both providers fail recoverably → ALL_PROVIDERS_FAILED.
+ *   5. Both not configured → ALL_PROVIDERS_FAILED.
+ *   6. Empty input → EMPTY_INPUT.
+ *   7. Per-provider attempts audit trail is preserved.
+ *   8. Total durationMs is the wall-clock across all attempts.
  *
- * These tests mock `fetch` (so grokProvider and geminiProvider both observe
- * the same fetch) AND mutate env to enable/disable providers per test.
+ * These tests mock both SDKs (`OpenAI.Responses.prototype.create` and
+ * `GoogleGenAI`'s `interactions.create`) so we test the full fallback
+ * chain without making real HTTP calls.
  */
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import OpenAI from 'openai';
+import { ApiError } from '@google/genai';
 import { llmService } from '../src/services/llm/llmService.js';
 import { env } from '../src/config/env.js';
 import {
-  mockFetch,
-  grokResponse,
+  mockOpenAIResponses,
+  mockGeminiInteractions,
+  groqResponse,
   geminiResponse,
   validExtraction,
 } from './_helpers.js';
 
-describe('llmService — fallback orchestration', () => {
-  let fetchMock;
+describe('llmService — fallback orchestration (Groq → Gemini)', () => {
+  let groqMock;
+  let geminiMock;
   const saved = {
-    GROK_API_KEY: env.GROK_API_KEY,
+    GROQ_API_KEY: env.GROQ_API_KEY,
     GEMINI_API_KEY: env.GEMINI_API_KEY,
-    GROK_API_URL: env.GROK_API_URL,
-    GEMINI_API_URL: env.GEMINI_API_URL,
+    GROQ_BASE_URL: env.GROQ_BASE_URL,
     LLM_MAX_RETRIES: env.LLM_MAX_RETRIES,
     LLM_TIMEOUT_MS: env.LLM_TIMEOUT_MS,
   };
 
   beforeEach(() => {
-    env.GROK_API_KEY = 'test-grok-key';
+    env.GROQ_API_KEY = 'test-groq-key';
     env.GEMINI_API_KEY = 'test-gemini-key';
-    env.GROK_API_URL = 'https://grok.test/v1/chat/completions';
-    env.GEMINI_API_URL = 'https://gemini.test/v1beta';
+    env.GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
     env.LLM_MAX_RETRIES = 0; // no per-provider retry; isolates fallback logic
     env.LLM_TIMEOUT_MS = 5000;
   });
 
   afterEach(() => {
-    if (fetchMock) fetchMock.restore();
-    fetchMock = null;
+    if (groqMock) groqMock.restore();
+    if (geminiMock) geminiMock.restore();
+    groqMock = null;
+    geminiMock = null;
     Object.assign(env, saved);
   });
 
-  test('1. Grok success → no Gemini call', async () => {
+  test('1. Groq success → no Gemini call', async () => {
     let geminiCalls = 0;
-    fetchMock = mockFetch((url) => {
-      if (url.includes('gemini.test')) {
-        geminiCalls += 1;
-        return { status: 200, body: geminiResponse(validExtraction()) };
-      }
-      return { status: 200, body: grokResponse(validExtraction({ company: 'Grok-Win' })) };
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse(validExtraction({ company: 'Groq-Win' })),
+    );
+    geminiMock = mockGeminiInteractions(() => {
+      geminiCalls += 1;
+      return geminiResponse(validExtraction());
     });
     const out = await llmService.extractWithFallback('test');
     assert.equal(out.state, 'completed');
-    assert.equal(out.provider, 'grok');
-    assert.equal(out.parsed.company, 'Grok-Win');
-    assert.equal(geminiCalls, 0, 'Gemini must NOT be called when Grok succeeds');
+    assert.equal(out.provider, 'groq');
+    assert.equal(out.parsed.company, 'Groq-Win');
+    assert.equal(geminiCalls, 0, 'Gemini must NOT be called when Groq succeeds');
     assert.equal(out.attempts.length, 1);
-    assert.equal(out.attempts[0].provider, 'grok');
+    assert.equal(out.attempts[0].provider, 'groq');
     assert.equal(out.attempts[0].state, 'completed');
   });
 
-  test('2. Grok recoverable failure → Gemini is attempted and succeeds', async () => {
-    fetchMock = mockFetch((url) => {
-      if (url.includes('grok.test')) {
-        return { status: 503, body: { error: 'grok down' } };
-      }
-      return {
-        status: 200,
-        body: geminiResponse(validExtraction({ company: 'Gemini-Win' })),
-      };
-    });
+  test('2. Groq recoverable failure → Gemini is attempted and succeeds', async () => {
+    groqMock = mockOpenAIResponses(() =>
+      new OpenAI.InternalServerError({ message: 'groq down', status: 503 }),
+    );
+    geminiMock = mockGeminiInteractions(() =>
+      geminiResponse(validExtraction({ company: 'Gemini-Win' })),
+    );
     const out = await llmService.extractWithFallback('test');
     assert.equal(out.state, 'completed');
     assert.equal(out.provider, 'gemini');
     assert.equal(out.parsed.company, 'Gemini-Win');
     assert.equal(out.attempts.length, 2);
-    assert.equal(out.attempts[0].provider, 'grok');
+    assert.equal(out.attempts[0].provider, 'groq');
     assert.equal(out.attempts[0].state, 'failed');
     assert.equal(out.attempts[0].errorCode, 'PROVIDER_SERVER_ERROR');
     assert.equal(out.attempts[1].provider, 'gemini');
     assert.equal(out.attempts[1].state, 'completed');
   });
 
-  test('3. Grok non-recoverable failure → Gemini is NOT attempted', async () => {
+  test('3. Groq non-recoverable failure → Gemini is NOT attempted', async () => {
     let geminiCalls = 0;
-    fetchMock = mockFetch((url) => {
-      if (url.includes('gemini.test')) {
-        geminiCalls += 1;
-        return { status: 200, body: geminiResponse(validExtraction()) };
-      }
-      // Grok returns 200 but with schema-invalid output (INVALID_OUTPUT).
-      return {
-        status: 200,
-        body: grokResponse({ ...validExtraction(), serviceLine: 'design' }),
-      };
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse({ ...validExtraction(), serviceLine: 'design' }),
+    );
+    geminiMock = mockGeminiInteractions(() => {
+      geminiCalls += 1;
+      return geminiResponse(validExtraction());
     });
     const out = await llmService.extractWithFallback('test');
     assert.equal(out.state, 'failed');
     assert.equal(out.errorCode, 'INVALID_OUTPUT');
     assert.equal(geminiCalls, 0, 'Gemini must NOT be called on INVALID_OUTPUT');
     assert.equal(out.attempts.length, 1);
-    assert.equal(out.attempts[0].provider, 'grok');
+    assert.equal(out.attempts[0].provider, 'groq');
     assert.equal(out.attempts[0].errorCode, 'INVALID_OUTPUT');
   });
 
   test('4. Both providers fail recoverably → ALL_PROVIDERS_FAILED', async () => {
-    fetchMock = mockFetch(() => ({ status: 503, body: { error: 'all down' } }));
+    groqMock = mockOpenAIResponses(() =>
+      new OpenAI.InternalServerError({ message: 'groq down', status: 503 }),
+    );
+    geminiMock = mockGeminiInteractions(() =>
+      new ApiError({ message: 'gemini down', status: 503 }),
+    );
     const out = await llmService.extractWithFallback('test');
     assert.equal(out.state, 'failed');
     assert.equal(out.errorCode, 'PROVIDER_SERVER_ERROR'); // last error code
     assert.equal(out.attempts.length, 2);
-    assert.equal(out.attempts[0].provider, 'grok');
+    assert.equal(out.attempts[0].provider, 'groq');
     assert.equal(out.attempts[0].state, 'failed');
     assert.equal(out.attempts[1].provider, 'gemini');
     assert.equal(out.attempts[1].state, 'failed');
   });
 
-  test('5. Grok not configured → Gemini is attempted', async () => {
-    env.GROK_API_KEY = '';
-    fetchMock = mockFetch((url) => {
-      if (url.includes('grok.test')) {
-        return { status: 200, body: grokResponse(validExtraction()) };
-      }
-      return {
-        status: 200,
-        body: geminiResponse(validExtraction({ company: 'Gemini-Only' })),
-      };
-    });
+  test('5. Groq not configured → Gemini is attempted', async () => {
+    env.GROQ_API_KEY = '';
+    groqMock = mockOpenAIResponses(() => groqResponse(validExtraction()));
+    geminiMock = mockGeminiInteractions(() =>
+      geminiResponse(validExtraction({ company: 'Gemini-Only' })),
+    );
     const out = await llmService.extractWithFallback('test');
     assert.equal(out.state, 'completed');
     assert.equal(out.provider, 'gemini');
     assert.equal(out.parsed.company, 'Gemini-Only');
-    // Two attempts recorded: Grok (NOT_CONFIGURED) + Gemini (completed)
+    // Two attempts recorded: Groq (NOT_CONFIGURED) + Gemini (completed)
     assert.equal(out.attempts.length, 2);
-    assert.equal(out.attempts[0].provider, 'grok');
+    assert.equal(out.attempts[0].provider, 'groq');
     assert.equal(out.attempts[0].errorCode, 'NOT_CONFIGURED');
     assert.equal(out.attempts[1].provider, 'gemini');
     assert.equal(out.attempts[1].state, 'completed');
   });
 
   test('6. Neither provider configured → ALL_PROVIDERS_FAILED', async () => {
-    env.GROK_API_KEY = '';
+    env.GROQ_API_KEY = '';
     env.GEMINI_API_KEY = '';
-    fetchMock = mockFetch(() => ({ status: 200, body: {} }));
+    groqMock = mockOpenAIResponses(() => groqResponse(validExtraction()));
+    geminiMock = mockGeminiInteractions(() => geminiResponse(validExtraction()));
     const out = await llmService.extractWithFallback('test');
     assert.equal(out.state, 'failed');
     assert.equal(out.attempts.length, 2);
@@ -161,58 +159,64 @@ describe('llmService — fallback orchestration', () => {
     assert.equal(out.attempts[1].errorCode, 'NOT_CONFIGURED');
   });
 
-  test('7. Empty input → EMPTY_INPUT, no fetch calls', async () => {
-    fetchMock = mockFetch(() => ({ status: 200, body: {} }));
+  test('7. Empty input → EMPTY_INPUT, no SDK calls', async () => {
+    let groqCalls = 0;
+    let geminiCalls = 0;
+    groqMock = mockOpenAIResponses(() => {
+      groqCalls += 1;
+      return groqResponse(validExtraction());
+    });
+    geminiMock = mockGeminiInteractions(() => {
+      geminiCalls += 1;
+      return geminiResponse(validExtraction());
+    });
     const out = await llmService.extractWithFallback('');
     assert.equal(out.state, 'failed');
     assert.equal(out.errorCode, 'EMPTY_INPUT');
-    assert.equal(fetchMock.calls.length, 0);
+    assert.equal(groqCalls, 0);
+    assert.equal(geminiCalls, 0);
   });
 
   test('8. Per-provider attempts audit trail preserves rawOutput', async () => {
-    fetchMock = mockFetch((url) => {
-      if (url.includes('grok.test')) {
-        return { status: 503, body: { error: 'grok error payload' } };
-      }
-      return { status: 200, body: geminiResponse(validExtraction()) };
-    });
+    groqMock = mockOpenAIResponses(() =>
+      new OpenAI.InternalServerError({ message: 'groq error', status: 503 }),
+    );
+    geminiMock = mockGeminiInteractions(() => geminiResponse(validExtraction()));
     const out = await llmService.extractWithFallback('test');
-    assert.equal(out.attempts[0].rawOutput.error, 'grok error payload');
+    // Groq's failed attempt should have null rawOutput (we don't leak SDK error details)
+    assert.equal(out.attempts[0].rawOutput, null);
+    assert.equal(out.attempts[0].errorCode, 'PROVIDER_SERVER_ERROR');
+    // Gemini's successful attempt should have rawOutput + parsed
     assert.equal(out.attempts[1].state, 'completed');
     assert.ok(out.attempts[1].rawOutput);
     assert.ok(out.attempts[1].parsed);
   });
 
   test('9. durationMs is a positive number across attempts', async () => {
-    fetchMock = mockFetch(() => ({ status: 200, body: grokResponse(validExtraction()) }));
+    groqMock = mockOpenAIResponses(() => groqResponse(validExtraction()));
     const out = await llmService.extractWithFallback('test');
     assert.ok(out.durationMs >= 0);
     assert.ok(out.attempts[0].durationMs >= 0);
   });
 
-  test('10. Grok timeout → Gemini fallback', async () => {
-    fetchMock = mockFetch((url) => {
-      if (url.includes('grok.test')) {
-        // Simulate abort by throwing AbortError
-        const err = new Error('aborted');
-        err.name = 'AbortError';
-        throw err;
-      }
-      return { status: 200, body: geminiResponse(validExtraction({ company: 'Gemini-After-Timeout' })) };
-    });
+  test('10. Groq timeout → Gemini fallback', async () => {
+    groqMock = mockOpenAIResponses(() =>
+      new OpenAI.APIConnectionTimeoutError({ message: 'timed out' }),
+    );
+    geminiMock = mockGeminiInteractions(() =>
+      geminiResponse(validExtraction({ company: 'Gemini-After-Timeout' })),
+    );
     const out = await llmService.extractWithFallback('test');
     assert.equal(out.state, 'completed');
     assert.equal(out.provider, 'gemini');
     assert.equal(out.attempts[0].errorCode, 'PROVIDER_TIMEOUT');
   });
 
-  test('11. Grok network error → Gemini fallback', async () => {
-    fetchMock = mockFetch((url) => {
-      if (url.includes('grok.test')) {
-        throw new TypeError('ECONNREFUSED');
-      }
-      return { status: 200, body: geminiResponse(validExtraction()) };
-    });
+  test('11. Groq network error → Gemini fallback', async () => {
+    groqMock = mockOpenAIResponses(() =>
+      new OpenAI.APIConnectionError({ message: 'ECONNREFUSED' }),
+    );
+    geminiMock = mockGeminiInteractions(() => geminiResponse(validExtraction()));
     const out = await llmService.extractWithFallback('test');
     assert.equal(out.state, 'completed');
     assert.equal(out.provider, 'gemini');

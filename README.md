@@ -1,11 +1,11 @@
 # Sodio Enquiry Triage
 
 Internal enquiry triage workbench: ingest unstructured project enquiries,
-extract structured data via LLM (Grok primary / Gemini fallback),
+extract structured data via LLM (Groq primary / Gemini fallback),
 compute priority deterministically in application code, and give a human
 operator a fast review console.
 
-> **Status:** Phase 0 — Project Foundation (skeleton only).
+> **Status:** Phase 3 — LLM Extraction (Groq + Gemini via official SDKs).
 > See `Docs/Phases.md` for the full roadmap and `Docs/memory.md` for current state.
 
 ## Stack
@@ -13,7 +13,7 @@ operator a fast review console.
 - **Frontend:** React + Vite + JavaScript, Tailwind CSS, Redux Toolkit + `createAsyncThunk`
 - **Backend:** Node.js + Express.js + JavaScript
 - **Database:** MongoDB + Mongoose
-- **LLM:** Grok (primary) / Gemini (fallback) — server-side only, behind an adapter
+- **LLM:** Groq (primary, via `openai` SDK) / Gemini (fallback, via `@google/genai` SDK) — server-side only, behind a provider abstraction
 - **Language:** JavaScript only — no TypeScript
 
 ## Project layout
@@ -68,5 +68,14 @@ The Vite dev server proxies `/api` → `http://localhost:3001`.
 ## Security notes
 
 - `.env` is git-ignored — never commit secrets.
-- API keys are server-side only; React never calls Grok or Gemini directly.
-- The LLM provider adapters in Phase 0 are skeletons — no real API calls are made.
+- API keys are server-side only; React never calls Groq or Gemini directly.
+- Phase 3 LLM extraction uses the official `openai` and `@google/genai` SDKs.
+  Real API calls are made when `GROQ_API_KEY` / `GEMINI_API_KEY` are set;
+  empty values mean "not configured" (the provider is skipped, not treated
+  as a hard failure).
+- Prompt-injection boundary: every enquiry is treated as untrusted data.
+  The trusted system instruction is sent via the SDK's separate
+  `instructions` (Groq) / `system_instruction` (Gemini) field, and the
+  enquiry is wrapped in a `===ENQUIRY BEGIN/END===` data fence.
+- Extraction schema is strict zod — injected fields like `priority` or
+  `notes` are rejected (priority is computed by application code, not the LLM).

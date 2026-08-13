@@ -1,8 +1,8 @@
 /**
- * LLM service — provider-agnostic facade (Phase 3 implementation).
+ * LLM service — provider-agnostic facade (Phase 3, SDK-based).
  *
  * Provider order (Rules.md §3):
- *   Grok (primary)
+ *   Groq (primary)
  *     ↓ recoverable provider/API failure
  *   Gemini (secondary/fallback)
  *     ↓ failure (recoverable OR non-recoverable)
@@ -30,13 +30,13 @@
  * adapters). It never logs rawOutput unless explicitly asked — the provider
  * already logs a redacted summary.
  */
-import grokProvider, { extract as grokExtract } from './grokProvider.js';
+import groqProvider, { extract as groqExtract } from './groqProvider.js';
 import geminiProvider, { extract as geminiExtract } from './geminiProvider.js';
 import { logger } from '../../utils/logger.js';
 
 /**
  * @typedef {Object} ProviderAttempt
- * @property {string} provider        'grok' | 'gemini'
+ * @property {string} provider        'groq' | 'gemini'
  * @property {string|null} model
  * @property {'completed'|'failed'} state
  * @property {unknown|null} rawOutput
@@ -60,7 +60,7 @@ import { logger } from '../../utils/logger.js';
  */
 
 /**
- * Walk the Grok → Gemini chain.
+ * Walk the Groq → Gemini chain.
  *
  * @param {string} enquiryText
  * @returns {Promise<LlmOutcome>}
@@ -82,7 +82,7 @@ export async function extractWithFallback(enquiryText) {
 
   /** @type {Array<{name: string, fn: (t: string) => Promise<unknown>, configured: boolean}>} */
   const chain = [
-    { name: 'grok', fn: grokExtract, configured: grokProvider.isConfigured() },
+    { name: 'groq', fn: groqExtract, configured: groqProvider.isConfigured() },
     { name: 'gemini', fn: geminiExtract, configured: geminiProvider.isConfigured() },
   ];
 
@@ -182,7 +182,7 @@ export async function extractWithFallback(enquiryText) {
 
 export const llmService = {
   extractWithFallback,
-  providers: { grok: grokProvider, gemini: geminiProvider },
+  providers: { groq: groqProvider, gemini: geminiProvider },
 };
 
 export default llmService;

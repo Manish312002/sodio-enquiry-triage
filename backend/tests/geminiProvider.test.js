@@ -1,13 +1,14 @@
 /**
- * Test: geminiProvider — Phase 3 HTTP integration with mocked fetch.
+ * Test: geminiProvider — Phase 3 SDK integration with mocked @google/genai.
  *
- * Mirrors grokProvider.test.js but for Gemini-specific shapes:
- *   - endpoint URL contains ?key=<API_KEY>
- *   - request body uses Gemini's `contents`/`systemInstruction` shape
- *   - response body uses `candidates[0].content.parts[0].text`
+ * Mirrors groqProvider.test.js but for Gemini SDK-specific shapes:
+ *   - request params use `model`, `input`, `system_instruction`,
+ *     `response_format`, `generation_config`
+ *   - response object uses `output_text`
  */
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { ApiError } from '@google/genai';
 import {
   PROVIDER_NAME,
   isConfigured,
@@ -15,32 +16,30 @@ import {
 } from '../src/services/llm/geminiProvider.js';
 import { env } from '../src/config/env.js';
 import {
-  mockFetch,
+  mockGeminiInteractions,
   geminiResponse,
   validExtraction,
 } from './_helpers.js';
 
-describe('geminiProvider — Phase 3', () => {
-  let fetchMock;
+describe('geminiProvider — Phase 3 (@google/genai SDK)', () => {
+  let mock;
   const saved = {
     GEMINI_API_KEY: env.GEMINI_API_KEY,
     GEMINI_MODEL: env.GEMINI_MODEL,
-    GEMINI_API_URL: env.GEMINI_API_URL,
     LLM_MAX_RETRIES: env.LLM_MAX_RETRIES,
     LLM_TIMEOUT_MS: env.LLM_TIMEOUT_MS,
   };
 
   beforeEach(() => {
     env.GEMINI_API_KEY = 'test-gemini-key';
-    env.GEMINI_MODEL = 'gemini-2.0-flash';
-    env.GEMINI_API_URL = 'https://generativelanguage.test/v1beta';
+    env.GEMINI_MODEL = 'gemini-3.6-flash';
     env.LLM_MAX_RETRIES = 1;
     env.LLM_TIMEOUT_MS = 5000;
   });
 
   afterEach(() => {
-    if (fetchMock) fetchMock.restore();
-    fetchMock = null;
+    if (mock) mock.restore();
+    mock = null;
     Object.assign(env, saved);
   });
 
@@ -64,46 +63,53 @@ describe('geminiProvider — Phase 3', () => {
   });
 
   test('successful extraction returns parsed object + provider metadata', async () => {
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: geminiResponse(validExtraction({ company: 'Gemini Co' })),
-    }));
+    mock = mockGeminiInteractions(() =>
+      geminiResponse(validExtraction({ company: 'Gemini Co' })),
+    );
     const result = await extract('test enquiry');
     assert.equal(result.provider, 'gemini');
     assert.equal(result.parsed.company, 'Gemini Co');
     assert.ok(typeof result.durationMs === 'number');
   });
 
-  test('endpoint URL contains the API key as ?key=', async () => {
-    fetchMock = mockFetch(() => ({ status: 200, body: geminiResponse(validExtraction()) }));
+  test('request uses ai.interactions.create() with model + input + system_instruction', async () => {
+    mock = mockGeminiInteractions(() => geminiResponse(validExtraction()));
     await extract('test');
-    const url = fetchMock.calls[0].url;
-    assert.ok(url.includes(`key=${env.GEMINI_API_KEY}`));
-    assert.ok(url.includes(`/models/${env.GEMINI_MODEL}:generateContent`));
+    const params = mock.calls[0].params;
+    assert.equal(params.model, env.GEMINI_MODEL);
+    assert.ok(typeof params.input === 'string');
+    assert.ok(typeof params.system_instruction === 'string');
+    assert.ok(params.input.includes('===ENQUIRY BEGIN==='));
+    // Critical: the untrusted enquiry text must NOT be in system_instruction.
+    assert.ok(!params.system_instruction.includes('===ENQUIRY'));
+    assert.ok(!params.system_instruction.includes('test'));
   });
 
-  test('request body uses Gemini contents + systemInstruction shape', async () => {
-    fetchMock = mockFetch(() => ({ status: 200, body: geminiResponse(validExtraction()) }));
+  test('request includes response_format for structured output', async () => {
+    mock = mockGeminiInteractions(() => geminiResponse(validExtraction()));
     await extract('test');
-    const body = JSON.parse(fetchMock.calls[0].init.body);
-    assert.ok(body.systemInstruction);
-    assert.ok(body.systemInstruction.parts[0].text);
-    assert.ok(Array.isArray(body.contents));
-    assert.equal(body.contents[0].role, 'user');
-    assert.ok(body.contents[0].parts[0].text.includes('===ENQUIRY BEGIN==='));
+    const params = mock.calls[0].params;
+    assert.ok(params.response_format);
+    assert.equal(params.response_format.type, 'object');
+    assert.ok(params.response_format.properties);
+    // Verify enum constraints are set
+    assert.ok(params.response_format.properties.serviceLine.enum);
+    assert.ok(params.response_format.properties.budget.properties.qualifier.enum);
   });
 
-  test('uses responseMimeType: application/json + responseSchema', async () => {
-    fetchMock = mockFetch(() => ({ status: 200, body: geminiResponse(validExtraction()) }));
+  test('request includes generation_config with temperature=0', async () => {
+    mock = mockGeminiInteractions(() => geminiResponse(validExtraction()));
     await extract('test');
-    const body = JSON.parse(fetchMock.calls[0].init.body);
-    assert.equal(body.generationConfig.responseMimeType, 'application/json');
-    assert.ok(body.generationConfig.responseSchema);
-    assert.ok(body.generationConfig.responseSchema.properties);
+    const params = mock.calls[0].params;
+    assert.ok(params.generation_config);
+    assert.equal(params.generation_config.temperature, 0);
   });
 
   test('HTTP 5xx → PROVIDER_SERVER_ERROR, recoverable=true', async () => {
-    fetchMock = mockFetch(() => ({ status: 503, body: { error: 'down' } }));
+    mock = mockGeminiInteractions(() => {
+      const err = new ApiError({ message: 'down', status: 503 });
+      return err;
+    });
     await assert.rejects(
       extract('test'),
       (err) => err.code === 'PROVIDER_SERVER_ERROR' && err.recoverable === true,
@@ -111,35 +117,31 @@ describe('geminiProvider — Phase 3', () => {
   });
 
   test('HTTP 429 → PROVIDER_RATE_LIMIT, recoverable=true', async () => {
-    fetchMock = mockFetch(() => ({ status: 429, body: { error: 'rate limit' } }));
+    mock = mockGeminiInteractions(() => {
+      const err = new ApiError({ message: 'rate limited', status: 429 });
+      return err;
+    });
     await assert.rejects(
       extract('test'),
       (err) => err.code === 'PROVIDER_RATE_LIMIT' && err.recoverable === true,
     );
   });
 
-  test('network error → PROVIDER_NETWORK_ERROR, recoverable=true', async () => {
-    fetchMock = mockFetch(() => {
-      throw new TypeError('fetch failed');
+  test('HTTP 401 → PROVIDER_AUTH_ERROR, recoverable=true', async () => {
+    mock = mockGeminiInteractions(() => {
+      const err = new ApiError({ message: 'auth failed', status: 401 });
+      return err;
     });
     await assert.rejects(
       extract('test'),
-      (err) => err.code === 'PROVIDER_NETWORK_ERROR' && err.recoverable === true,
+      (err) => err.code === 'PROVIDER_AUTH_ERROR' && err.recoverable === true,
     );
   });
 
-  test('malformed JSON response → INVALID_OUTPUT, recoverable=false', async () => {
-    fetchMock = mockFetch(() => ({ status: 200, body: 'not json' }));
-    await assert.rejects(
-      extract('test'),
-      (err) => err.code === 'INVALID_OUTPUT' && err.recoverable === false,
-    );
-  });
-
-  test('schema-invalid response → INVALID_OUTPUT, recoverable=false', async () => {
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: geminiResponse({ ...validExtraction(), serviceLine: 'design' }),
+  test('malformed JSON in output_text → INVALID_OUTPUT, recoverable=false', async () => {
+    mock = mockGeminiInteractions(() => ({
+      id: 'interaction_test',
+      output_text: 'not json',
     }));
     await assert.rejects(
       extract('test'),
@@ -147,10 +149,20 @@ describe('geminiProvider — Phase 3', () => {
     );
   });
 
-  test('empty candidate content → INVALID_OUTPUT', async () => {
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: { candidates: [{ content: { parts: [{ text: '' }] } }] },
+  test('schema-invalid response → INVALID_OUTPUT, recoverable=false', async () => {
+    mock = mockGeminiInteractions(() =>
+      geminiResponse({ ...validExtraction(), serviceLine: 'design' }),
+    );
+    await assert.rejects(
+      extract('test'),
+      (err) => err.code === 'INVALID_OUTPUT' && err.recoverable === false,
+    );
+  });
+
+  test('empty output_text → INVALID_OUTPUT', async () => {
+    mock = mockGeminiInteractions(() => ({
+      id: 'interaction_test',
+      output_text: '',
     }));
     await assert.rejects(
       extract('test'),
@@ -160,10 +172,12 @@ describe('geminiProvider — Phase 3', () => {
 
   test('retry on recoverable error then succeed', async () => {
     let calls = 0;
-    fetchMock = mockFetch(() => {
+    mock = mockGeminiInteractions(() => {
       calls += 1;
-      if (calls === 1) return { status: 500, body: { error: 'down' } };
-      return { status: 200, body: geminiResponse(validExtraction()) };
+      if (calls === 1) {
+        return new ApiError({ message: 'down', status: 500 });
+      }
+      return geminiResponse(validExtraction());
     });
     const result = await extract('test');
     assert.equal(calls, 2);
@@ -172,22 +186,33 @@ describe('geminiProvider — Phase 3', () => {
 
   test('no retry on INVALID_OUTPUT', async () => {
     let calls = 0;
-    fetchMock = mockFetch(() => {
+    mock = mockGeminiInteractions(() => {
       calls += 1;
-      return {
-        status: 200,
-        body: geminiResponse({ ...validExtraction(), serviceLine: 'design' }),
-      };
+      return geminiResponse({ ...validExtraction(), serviceLine: 'design' });
     });
     await assert.rejects(extract('test'), (err) => err.code === 'INVALID_OUTPUT');
     assert.equal(calls, 1);
   });
 
-  test('Unicode content preserved in request body', async () => {
-    fetchMock = mockFetch(() => ({ status: 200, body: geminiResponse(validExtraction()) }));
+  test('SDK errors do NOT leak the API key in rawOutput', async () => {
+    mock = mockGeminiInteractions(() =>
+      new ApiError({ message: 'down', status: 503 }),
+    );
+    await assert.rejects(
+      extract('test'),
+      (err) => {
+        assert.equal(err.rawOutput, null);
+        assert.ok(!err.cause?.includes(env.GEMINI_API_KEY));
+        return true;
+      },
+    );
+  });
+
+  test('Unicode content preserved in request input', async () => {
+    mock = mockGeminiInteractions(() => geminiResponse(validExtraction()));
     const enquiry = 'Buenos días — 25.000 € — ¿Pueden? 🙏';
     await extract(enquiry);
-    const body = JSON.parse(fetchMock.calls[0].init.body);
-    assert.ok(body.contents[0].parts[0].text.includes(enquiry));
+    const params = mock.calls[0].params;
+    assert.ok(params.input.includes(enquiry));
   });
 });

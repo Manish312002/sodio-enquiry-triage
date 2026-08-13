@@ -956,3 +956,123 @@ Unicode preservation:                    13 tests  PASS
 ### Status
 
 Phase 3 is fully complete, verified end-to-end. **97/97 backend tests pass + 31/31 E2E tests pass + 19/19 Phase 2 regression + Phase 1 regression passes + frontend build PASS.** **Do not start Phase 4 without explicit operator approval.**
+
+---
+
+## Phase 3 — SDK Migration (Groq + official SDKs)
+
+**Commit:** see `git log` for the Phase 3 SDK migration commit hash.
+**Date:** 2026-08-13
+**Status:** Phase 3 implementation migrated from direct-HTTP (xAI/Grok + Gemini REST) to the operator-specified official SDKs (Groq via `openai` SDK + Gemini via `@google/genai` SDK). All Phase 3 tests re-verified.
+
+### What changed
+
+**Provider rename: Grok → Groq.** The primary provider is now **Groq** (not xAI/Grok). All `grokProvider` references renamed to `groqProvider`. The `ExtractionVersion.provider` enum changed from `['grok', 'gemini']` to `['groq', 'gemini']`.
+
+**SDK-based providers (replaces direct HTTP).** Both providers now use their official SDKs instead of raw `fetch` calls:
+
+1. **Groq** uses the `openai` npm package (`v7.4.0`) pointed at Groq's OpenAI-compatible endpoint via `baseURL: 'https://api.groq.com/openai/v1'`. Uses `client.responses.create()` (the Responses API) per the operator specification. Model: `openai/gpt-oss-20b` (verified available on Groq since Aug 2025).
+
+2. **Gemini** uses the `@google/genai` SDK (`v2.17.0`). Uses `ai.interactions.create()` (the Interactions API) per the operator specification. Model: `gemini-3.6-flash` (verified available since Jul 21, 2026 per blog.google and ai.google.dev).
+
+**API verification (done before implementation):**
+- `client.responses.create()` — confirmed exists in `openai@7.4.0`
+- `response.output_text` — confirmed field on the response object
+- `ai.interactions.create()` — confirmed exists in `@google/genai@2.17.0`
+- `interaction.output_text` — confirmed field on the response object
+- `openai/gpt-oss-20b` on Groq — confirmed available (web search Aug 2025 release)
+- `gemini-3.6-flash` — confirmed available (web search Jul 21, 2026 release)
+
+**No incompatibilities found.** All APIs and models the operator specified are currently available in the installed SDK versions.
+
+**Env var changes:**
+- `GROK_API_KEY` → `GROQ_API_KEY`
+- `GROK_MODEL` → `GROQ_MODEL` (default `openai/gpt-oss-20b`)
+- `GROK_API_URL` → `GROQ_BASE_URL` (default `https://api.groq.com/openai/v1`)
+- Removed `GEMINI_API_URL` (the `@google/genai` SDK handles endpoint internally)
+- `GEMINI_MODEL` default changed from `gemini-2.0-flash` to `gemini-3.6-flash`
+
+**Error classification (now uses SDK typed errors):**
+- `OpenAI.APIConnectionTimeoutError` → `PROVIDER_TIMEOUT` (checked BEFORE `APIConnectionError` because the timeout class extends the connection-error class)
+- `OpenAI.APIConnectionError` → `PROVIDER_NETWORK_ERROR`
+- `OpenAI.RateLimitError` (HTTP 429) → `PROVIDER_RATE_LIMIT`
+- `OpenAI.InternalServerError` (HTTP 5xx) → `PROVIDER_SERVER_ERROR`
+- `OpenAI.AuthenticationError` (401/403) → `PROVIDER_AUTH_ERROR`
+- `OpenAI.BadRequestError` (other 4xx) → `PROVIDER_HTTP_ERROR`
+- `ApiError` from `@google/genai` — same classification matrix based on `err.status`
+
+**Test mocking strategy changed:**
+- Old: mocked `global.fetch` (intercepted HTTP requests at the transport layer)
+- New: mocks `OpenAI.Responses.prototype.create` and the Gemini `Interactions.prototype.create` (intercepts at the SDK method layer)
+
+This is more robust because:
+1. Tests are independent of the SDK's internal HTTP implementation
+2. Tests verify our adapter's SDK-usage patterns directly (e.g. that we pass `instructions` for the system prompt, `input` for the user message)
+3. SDK error classes can be constructed directly (`new OpenAI.InternalServerError(...)`) without needing to fabricate HTTP responses
+
+**Files changed:**
+- Renamed: `backend/src/services/llm/grokProvider.js` → `groqProvider.js`
+- Renamed: `backend/tests/grokProvider.test.js` → `groqProvider.test.js`
+- Rewritten: `groqProvider.js`, `geminiProvider.js`, `llmService.js`, `tests/_helpers.js`, all test files
+- Updated: `env.js`, `.env.example`, `ExtractionVersion.js` (provider enum), `backend/package.json` (new deps + test:unit script), `backend/.gitignore` (test artifacts)
+- Updated: `README.md` (status, stack, security notes)
+- Updated: `scripts/phase3-test.sh` (E2E now uses `node --import` to inject SDK mocks before the backend starts)
+
+**New dependencies added to `backend/package.json`:**
+- `openai@^7.4.0` — official OpenAI SDK (used for Groq via OpenAI-compatible endpoint)
+- `@google/genai@^2.17.0` — official Google GenAI SDK
+
+### Verification results — all green
+
+**Backend tests (100/100 PASS):**
+```
+extractionPrompt — injection boundary:    6 tests  PASS
+extractionSchema:                        13 tests  PASS
+extractionService — Phase 3:             12 tests  PASS (real MongoDB)
+geminiProvider — Phase 3 (@google/genai): 17 tests PASS
+groqProvider — Phase 3 (OpenAI SDK):     19 tests  PASS
+llmService — fallback orchestration:     11 tests  PASS
+prompt injection boundary (real fixture): 9 tests  PASS
+Unicode preservation:                    13 tests  PASS
+                                         --------
+                                         100 tests PASS, 0 FAIL
+```
+
+**E2E tests (31/31 PASS):** All 12 scenarios pass (404, 400, successful Groq extraction, GET extractions, originalText preserved, priority NOT computed, prompt-injection as data, Unicode preserved, Phase 1 regression, Phase 2 regression).
+
+**Phase 1 regression:** PASS (exit 0)
+**Phase 2 regression:** 19/19 PASS
+**Frontend build:** PASS (103 modules, 234KB JS, 10.84KB CSS)
+
+### Documentation updates
+
+| File | Reason |
+|---|---|
+| `README.md` | Updated status from "Phase 0" to "Phase 3"; updated stack to reflect Groq (not Grok) + SDK-based providers; updated security notes to describe the prompt-injection boundary at the SDK level |
+| `.env.example` | Replaced GROK_* vars with GROQ_* vars; added GROQ_BASE_URL; updated GEMINI_MODEL default to gemini-3.6-flash; removed GEMINI_API_URL (SDK handles internally) |
+| `backend/.gitignore` | Added `tests/_mock_preload.mjs` (test artifact generated by phase3-test.sh) |
+| `Docs/memory.md` | This section appended |
+
+### Decisions made during SDK migration
+
+1. **Mock at the SDK method level, not at fetch.** Old tests mocked `global.fetch` which intercepted HTTP at the transport layer. New tests mock `OpenAI.Responses.prototype.create` and the Gemini `Interactions.prototype.create` directly. This is more robust because (a) tests are independent of the SDK's internal HTTP implementation, (b) tests verify our adapter's SDK-usage patterns directly, and (c) SDK error classes can be constructed directly without fabricating HTTP responses.
+
+2. **Lazy client construction.** Both providers construct their SDK client per-call rather than at module load. This lets tests mutate `env.GROQ_API_KEY` / `env.GEMINI_API_KEY` between tests and the new value takes effect immediately (would not work if the client were a module-level singleton).
+
+3. **E2E mock injection via `node --import`.** The E2E script writes a mock preloader file (`tests/_mock_preload.mjs`) that patches the SDK methods before the backend imports them. The backend is started with `node --import "file://...mock_preload.mjs" src/server.js`. This lets us run the real backend code path (HTTP routes, controllers, services, MongoDB persistence) while mocking only the LLM SDK calls. The preloader file is gitignored and cleaned up after the test run.
+
+4. **Error class hierarchy matters.** `OpenAI.APIConnectionTimeoutError` extends `OpenAI.APIConnectionError`. The `classifyError` function checks `APIConnectionTimeoutError` FIRST so timeouts are classified as `PROVIDER_TIMEOUT`, not `PROVIDER_NETWORK_ERROR`. This was caught by a unit test during development.
+
+5. **No silent model substitution.** The operator specified `openai/gpt-oss-20b` and `gemini-3.6-flash`. I verified both are currently available (web search) before hard-coding them as defaults. No substitution was needed.
+
+6. **`response_format` for structured output.** Both providers request JSON output:
+   - Groq: `text: { format: { type: 'json_object' } }` (OpenAI-compatible)
+   - Gemini: `response_format: { type: 'object', properties: {...}, required: [...] }` (JSON-schema dialect)
+   
+   Both still re-validate with zod for defence in depth (Rules.md §5).
+
+7. **System instruction is sent via the SDK's separate field.** Groq: `instructions` parameter. Gemini: `system_instruction` parameter. The untrusted enquiry is NEVER concatenated into the system instruction — it goes into the `input` field, wrapped in the `===ENQUIRY BEGIN/END===` fence. This preserves the prompt-injection boundary at the SDK level (Rules.md §4).
+
+### Status
+
+Phase 3 SDK migration is fully complete. **100/100 backend tests pass + 31/31 E2E tests pass + 19/19 Phase 2 regression + Phase 1 regression passes + frontend build PASS.** **Do not start Phase 4 without explicit operator approval.**

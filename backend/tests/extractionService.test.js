@@ -2,11 +2,12 @@
  * Test: extractionService — persistence + enquiry update
  *
  * These tests run against a REAL MongoDB instance (mirroring Phase 1/2
- * convention). They verify:
+ * convention) AND mock both SDKs (`OpenAI.Responses.prototype.create` and
+ * `@google/genai`'s `interactions.create`). They verify:
  *
- *   1. Successful Grok extraction → ExtractionVersion persisted,
+ *   1. Successful Groq extraction → ExtractionVersion persisted,
  *      enquiry.effectiveExtraction updated, extractionState='completed'.
- *   2. Grok failure → Gemini success → TWO ExtractionVersions persisted
+ *   2. Groq failure → Gemini success → TWO ExtractionVersions persisted
  *      (one failed, one completed), enquiry updated from Gemini result.
  *   3. Both providers fail → ExtractionVersions persisted (both failed),
  *      enquiry.extractionState='failed', effectiveExtraction unchanged.
@@ -17,6 +18,8 @@
  *   6. 404 when enquiry does not exist.
  *   7. 409 when enquiry is already 'processing'.
  *   8. listExtractions returns versions in order.
+ *   9. Prompt-injection enquiry extracted as ordinary data.
+ *  10. INVALID_OUTPUT does NOT call Gemini and marks enquiry failed.
  *
  * Requires: MongoDB running at env.MONGODB_URI. The tests use a separate
  * `phase3_test` database to avoid polluting the dev database.
@@ -24,14 +27,17 @@
 import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
+import OpenAI from 'openai';
+import { ApiError } from '@google/genai';
 import { env } from '../src/config/env.js';
 import Enquiry from '../src/models/Enquiry.js';
 import ExtractionVersion from '../src/models/ExtractionVersion.js';
 import * as extractionService from '../src/services/extractionService.js';
 import { AppError } from '../src/middleware/errorHandler.js';
 import {
-  mockFetch,
-  grokResponse,
+  mockOpenAIResponses,
+  mockGeminiInteractions,
+  groqResponse,
   geminiResponse,
   validExtraction,
   findFixtureBlock,
@@ -41,7 +47,8 @@ import {
 const TEST_DB = 'sodio_enquiry_triage_phase3_test';
 
 let originalMongoUri;
-let fetchMock;
+let groqMock;
+let geminiMock;
 
 before(async () => {
   originalMongoUri = env.MONGODB_URI;
@@ -58,19 +65,21 @@ after(async () => {
 
 describe('extractionService — Phase 3', () => {
   const savedEnv = {
-    GROK_API_KEY: env.GROK_API_KEY,
-    GROK_API_URL: env.GROK_API_URL,
+    GROQ_API_KEY: env.GROQ_API_KEY,
+    GROQ_BASE_URL: env.GROQ_BASE_URL,
+    GROQ_MODEL: env.GROQ_MODEL,
     GEMINI_API_KEY: env.GEMINI_API_KEY,
-    GEMINI_API_URL: env.GEMINI_API_URL,
+    GEMINI_MODEL: env.GEMINI_MODEL,
     LLM_MAX_RETRIES: env.LLM_MAX_RETRIES,
     LLM_TIMEOUT_MS: env.LLM_TIMEOUT_MS,
   };
 
   beforeEach(async () => {
-    env.GROK_API_KEY = 'test-grok-key';
-    env.GROK_API_URL = 'https://grok.test/v1/chat/completions';
+    env.GROQ_API_KEY = 'test-groq-key';
+    env.GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
+    env.GROQ_MODEL = 'openai/gpt-oss-20b';
     env.GEMINI_API_KEY = 'test-gemini-key';
-    env.GEMINI_API_URL = 'https://gemini.test/v1beta';
+    env.GEMINI_MODEL = 'gemini-3.6-flash';
     env.LLM_MAX_RETRIES = 0;
     env.LLM_TIMEOUT_MS = 5000;
     await Enquiry.deleteMany({});
@@ -78,8 +87,10 @@ describe('extractionService — Phase 3', () => {
   });
 
   afterEach(() => {
-    if (fetchMock) fetchMock.restore();
-    fetchMock = null;
+    if (groqMock) groqMock.restore();
+    if (geminiMock) geminiMock.restore();
+    groqMock = null;
+    geminiMock = null;
     Object.assign(env, savedEnv);
   });
 
@@ -96,43 +107,37 @@ describe('extractionService — Phase 3', () => {
     return e;
   }
 
-  test('1. Successful Grok extraction persists version + updates enquiry', async () => {
+  test('1. Successful Groq extraction persists version + updates enquiry', async () => {
     const block = findFixtureBlock('Rachel Whitfield');
     const enquiry = await createEnquiry(block.message, {
       name: 'Rachel Whitfield',
       email: 'r.whitfield@northgate-logistics.co.uk',
     });
 
-    fetchMock = mockFetch((url) => {
-      if (url.includes('gemini.test')) {
-        return { status: 200, body: geminiResponse(validExtraction()) };
-      }
-      return {
-        status: 200,
-        body: grokResponse(validExtraction({
-          company: 'Northgate Logistics',
-          contactName: 'Rachel Whitfield',
-          contactEmail: 'r.whitfield@northgate-logistics.co.uk',
-          serviceLine: 'web',
-          budget: { raw: '£40,000', currency: 'GBP', min: 40000, max: 40000, qualifier: 'exact' },
-          summary: 'Logistics firm wants a tool to extract data from supplier PDFs.',
-          isGenuineProjectEnquiry: true,
-        })),
-      };
-    });
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse(validExtraction({
+        company: 'Northgate Logistics',
+        contactName: 'Rachel Whitfield',
+        contactEmail: 'r.whitfield@northgate-logistics.co.uk',
+        serviceLine: 'web',
+        budget: { raw: '£40,000', currency: 'GBP', min: 40000, max: 40000, qualifier: 'exact' },
+        summary: 'Logistics firm wants a tool to extract data from supplier PDFs.',
+        isGenuineProjectEnquiry: true,
+      })),
+    );
 
     const { enquiry: updated, versions, outcome } = await extractionService.runExtraction(
       String(enquiry._id),
     );
 
     assert.equal(outcome.state, 'completed');
-    assert.equal(outcome.provider, 'grok');
+    assert.equal(outcome.provider, 'groq');
     assert.equal(updated.extractionState, 'completed');
     assert.equal(updated.effectiveExtraction.company, 'Northgate Logistics');
     assert.equal(updated.effectiveExtraction.budget.raw, '£40,000');
     assert.equal(updated.isGenuineProjectEnquiry, true);
     assert.equal(versions.length, 1);
-    assert.equal(versions[0].provider, 'grok');
+    assert.equal(versions[0].provider, 'groq');
     assert.equal(versions[0].state, 'completed');
     assert.equal(versions[0].version, 1);
     assert.ok(versions[0].durationMs >= 0);
@@ -142,30 +147,27 @@ describe('extractionService — Phase 3', () => {
     assert.equal(updated.priority.score, null);
   });
 
-  test('2. Grok failure → Gemini success persists TWO versions', async () => {
+  test('2. Groq failure → Gemini success persists TWO versions', async () => {
     const block = findFixtureBlock('Miguel Santana');
     const enquiry = await createEnquiry(block.message, {
       name: 'Miguel Santana',
       email: 'm.santana@clinicavera.es',
     });
 
-    fetchMock = mockFetch((url) => {
-      if (url.includes('grok.test')) {
-        return { status: 503, body: { error: 'grok down' } };
-      }
-      return {
-        status: 200,
-        body: geminiResponse(validExtraction({
-          company: 'Clínica Vera',
-          contactName: 'Miguel Santana',
-          contactEmail: 'm.santana@clinicavera.es',
-          serviceLine: 'mobile',
-          budget: { raw: '25.000 €', currency: 'EUR', min: 25000, max: 25000, qualifier: 'exact' },
-          summary: 'Clínica quiere app móvil para reservas.',
-          isGenuineProjectEnquiry: true,
-        })),
-      };
-    });
+    groqMock = mockOpenAIResponses(() =>
+      new OpenAI.InternalServerError({ message: 'groq down', status: 503 }),
+    );
+    geminiMock = mockGeminiInteractions(() =>
+      geminiResponse(validExtraction({
+        company: 'Clínica Vera',
+        contactName: 'Miguel Santana',
+        contactEmail: 'm.santana@clinicavera.es',
+        serviceLine: 'mobile',
+        budget: { raw: '25.000 €', currency: 'EUR', min: 25000, max: 25000, qualifier: 'exact' },
+        summary: 'Clínica quiere app móvil para reservas.',
+        isGenuineProjectEnquiry: true,
+      })),
+    );
 
     const { enquiry: updated, versions, outcome } = await extractionService.runExtraction(
       String(enquiry._id),
@@ -177,7 +179,7 @@ describe('extractionService — Phase 3', () => {
     assert.equal(updated.effectiveExtraction.company, 'Clínica Vera');
     assert.equal(updated.effectiveExtraction.budget.raw, '25.000 €');
     assert.equal(versions.length, 2);
-    assert.equal(versions[0].provider, 'grok');
+    assert.equal(versions[0].provider, 'groq');
     assert.equal(versions[0].state, 'failed');
     assert.equal(versions[0].errorCode, 'PROVIDER_SERVER_ERROR');
     assert.equal(versions[1].provider, 'gemini');
@@ -192,7 +194,12 @@ describe('extractionService — Phase 3', () => {
       email: 'tokafor@meridian-cap.com',
     });
 
-    fetchMock = mockFetch(() => ({ status: 503, body: { error: 'all down' } }));
+    groqMock = mockOpenAIResponses(() =>
+      new OpenAI.InternalServerError({ message: 'groq down', status: 503 }),
+    );
+    geminiMock = mockGeminiInteractions(() =>
+      new ApiError({ message: 'gemini down', status: 503 }),
+    );
 
     const { enquiry: updated, versions, outcome } = await extractionService.runExtraction(
       String(enquiry._id),
@@ -205,7 +212,7 @@ describe('extractionService — Phase 3', () => {
     assert.equal(updated.effectiveExtraction.company, null);
     assert.equal(updated.effectiveExtraction.serviceLine, 'other');
     assert.equal(versions.length, 2);
-    assert.equal(versions[0].provider, 'grok');
+    assert.equal(versions[0].provider, 'groq');
     assert.equal(versions[0].state, 'failed');
     assert.equal(versions[1].provider, 'gemini');
     assert.equal(versions[1].state, 'failed');
@@ -223,10 +230,7 @@ describe('extractionService — Phase 3', () => {
     const originalSenderEmail = enquiry.sender.email;
     const originalStatus = enquiry.status;
 
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: grokResponse(validExtraction()),
-    }));
+    groqMock = mockOpenAIResponses(() => groqResponse(validExtraction()));
     await extractionService.runExtraction(String(enquiry._id));
 
     // Reload from DB
@@ -246,10 +250,9 @@ describe('extractionService — Phase 3', () => {
     });
 
     // First extraction succeeds
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: grokResponse(validExtraction({ company: 'Shibuya Labs' })),
-    }));
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse(validExtraction({ company: 'Shibuya Labs' })),
+    );
     await extractionService.runExtraction(String(enquiry._id));
 
     // Reset enquiry state to allow re-extraction (Phase 7 will formalise this)
@@ -259,11 +262,10 @@ describe('extractionService — Phase 3', () => {
     );
 
     // Second extraction (re-extract) creates version 2, NOT overwrites version 1
-    if (fetchMock) fetchMock.restore();
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: grokResponse(validExtraction({ company: 'Shibuya Labs Updated' })),
-    }));
+    groqMock.restore();
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse(validExtraction({ company: 'Shibuya Labs Updated' })),
+    );
     await extractionService.runExtraction(String(enquiry._id));
 
     const versions = await ExtractionVersion.find({ enquiryId: enquiry._id }).sort({
@@ -316,20 +318,18 @@ describe('extractionService — Phase 3', () => {
     });
 
     // Run two extractions
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: grokResponse(validExtraction({ company: 'Bergwald GmbH' })),
-    }));
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse(validExtraction({ company: 'Bergwald GmbH' })),
+    );
     await extractionService.runExtraction(String(enquiry._id));
     await Enquiry.updateOne(
       { _id: enquiry._id },
       { $set: { extractionState: 'pending' } },
     );
-    if (fetchMock) fetchMock.restore();
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: grokResponse(validExtraction({ company: 'Bergwald GmbH v2' })),
-    }));
+    groqMock.restore();
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse(validExtraction({ company: 'Bergwald GmbH v2' })),
+    );
     await extractionService.runExtraction(String(enquiry._id));
 
     const docs = await extractionService.listExtractions(String(enquiry._id));
@@ -353,9 +353,8 @@ describe('extractionService — Phase 3', () => {
       email: 'contact@qa-test-mail.io',
     });
 
-    fetchMock = mockFetch(() => ({
-      status: 200,
-      body: grokResponse({
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse({
         company: null,
         contactName: 'system',
         contactEmail: 'contact@qa-test-mail.io',
@@ -369,7 +368,7 @@ describe('extractionService — Phase 3', () => {
         additionalProjectNote: null,
         isModelInstructionAttempt: true,
       }),
-    }));
+    );
 
     const { enquiry: updated, versions } = await extractionService.runExtraction(
       String(enquiry._id),
@@ -393,16 +392,12 @@ describe('extractionService — Phase 3', () => {
     });
 
     let geminiCalls = 0;
-    fetchMock = mockFetch((url) => {
-      if (url.includes('gemini.test')) {
-        geminiCalls += 1;
-        return { status: 200, body: geminiResponse(validExtraction()) };
-      }
-      // Grok returns schema-invalid output
-      return {
-        status: 200,
-        body: grokResponse({ ...validExtraction(), serviceLine: 'design' }),
-      };
+    groqMock = mockOpenAIResponses(() =>
+      groqResponse({ ...validExtraction(), serviceLine: 'design' }),
+    );
+    geminiMock = mockGeminiInteractions(() => {
+      geminiCalls += 1;
+      return geminiResponse(validExtraction());
     });
 
     const { enquiry: updated, versions, outcome } = await extractionService.runExtraction(
@@ -414,7 +409,7 @@ describe('extractionService — Phase 3', () => {
     assert.equal(geminiCalls, 0, 'Gemini must NOT be called on INVALID_OUTPUT');
     assert.equal(updated.extractionState, 'failed');
     assert.equal(versions.length, 1);
-    assert.equal(versions[0].provider, 'grok');
+    assert.equal(versions[0].provider, 'groq');
     assert.equal(versions[0].state, 'failed');
     assert.equal(versions[0].errorCode, 'INVALID_OUTPUT');
   });

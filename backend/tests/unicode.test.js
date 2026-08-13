@@ -10,8 +10,7 @@
  *   - Website Contact Form (🙏 emoji)
  *
  * Verifies:
- *   - The enquiry text appears UNCHANGED in the HTTP request body sent to
- *     both Grok and Gemini.
+ *   - The enquiry text appears UNCHANGED in the SDK request `input` field.
  *   - The extraction schema accepts Unicode in all string fields.
  *   - The llmService outcome preserves Unicode in parsedOutput when the
  *     mocked provider returns it.
@@ -23,10 +22,10 @@ import { llmService } from '../src/services/llm/llmService.js';
 import { env } from '../src/config/env.js';
 import {
   findFixtureBlock,
-  mockFetch,
-  grokResponse,
-  validExtraction,
   readFixtureBlocks,
+  mockOpenAIResponses,
+  groqResponse,
+  validExtraction,
 } from './_helpers.js';
 
 describe('Unicode preservation', () => {
@@ -101,36 +100,34 @@ describe('Unicode preservation', () => {
     }
   });
 
-  describe('end-to-end: provider request preserves Unicode', () => {
-    let fetchMock;
+  describe('end-to-end: SDK request preserves Unicode', () => {
+    let mock;
     const saved = {
-      GROK_API_KEY: env.GROK_API_KEY,
-      GROK_API_URL: env.GROK_API_URL,
+      GROQ_API_KEY: env.GROQ_API_KEY,
+      GROQ_BASE_URL: env.GROQ_BASE_URL,
       GEMINI_API_KEY: env.GEMINI_API_KEY,
-      GEMINI_API_URL: env.GEMINI_API_URL,
       LLM_MAX_RETRIES: env.LLM_MAX_RETRIES,
       LLM_TIMEOUT_MS: env.LLM_TIMEOUT_MS,
     };
 
     beforeEach(() => {
-      env.GROK_API_KEY = 'test-key';
-      env.GROK_API_URL = 'https://grok.test/v1/chat/completions';
+      env.GROQ_API_KEY = 'test-key';
+      env.GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
       env.GEMINI_API_KEY = '';
       env.LLM_MAX_RETRIES = 0;
       env.LLM_TIMEOUT_MS = 5000;
     });
 
     afterEach(() => {
-      if (fetchMock) fetchMock.restore();
-      fetchMock = null;
+      if (mock) mock.restore();
+      mock = null;
       Object.assign(env, saved);
     });
 
-    test('Miguel Santana (Spanish + €) is preserved in the Grok request', async () => {
+    test('Miguel Santana (Spanish + €) is preserved in the Groq request', async () => {
       const block = findFixtureBlock('Miguel Santana');
-      fetchMock = mockFetch(() => ({
-        status: 200,
-        body: grokResponse(validExtraction({
+      mock = mockOpenAIResponses(() =>
+        groqResponse(validExtraction({
           company: 'Clínica Vera',
           contactName: 'Miguel Santana',
           contactEmail: 'm.santana@clinicavera.es',
@@ -144,14 +141,14 @@ describe('Unicode preservation', () => {
           },
           summary: 'Clínica privada en Valencia quiere app móvil para reservas. Presupuesto 25.000 €.',
         })),
-      }));
+      );
       const out = await llmService.extractWithFallback(block.message);
       assert.equal(out.state, 'completed');
       // Verify the request body preserved Unicode
-      const body = JSON.parse(fetchMock.calls[0].init.body);
-      assert.ok(body.messages[1].content.includes('Buenos días'));
-      assert.ok(body.messages[1].content.includes('25.000 €'));
-      assert.ok(body.messages[1].content.includes('¿Pueden ayudarnos?'));
+      const params = mock.calls[0].params;
+      assert.ok(params.input.includes('Buenos días'));
+      assert.ok(params.input.includes('25.000 €'));
+      assert.ok(params.input.includes('¿Pueden ayudarnos?'));
       // Verify the parsed output preserved Unicode
       assert.equal(out.parsed.company, 'Clínica Vera');
       assert.equal(out.parsed.budget.raw, '25.000 €');
@@ -159,43 +156,40 @@ describe('Unicode preservation', () => {
       assert.ok(out.parsed.summary.includes('25.000 €'));
     });
 
-    test('Rachel Whitfield (£) is preserved in the Grok request', async () => {
+    test('Rachel Whitfield (£) is preserved in the Groq request', async () => {
       const block = findFixtureBlock('Rachel Whitfield');
-      fetchMock = mockFetch(() => ({
-        status: 200,
-        body: grokResponse(validExtraction({
+      mock = mockOpenAIResponses(() =>
+        groqResponse(validExtraction({
           company: 'Northgate Logistics',
           budget: { raw: '£40,000', currency: 'GBP', min: 40000, max: 40000, qualifier: 'exact' },
         })),
-      }));
+      );
       const out = await llmService.extractWithFallback(block.message);
       assert.equal(out.state, 'completed');
       assert.equal(out.parsed.budget.raw, '£40,000');
-      const body = JSON.parse(fetchMock.calls[0].init.body);
-      assert.ok(body.messages[1].content.includes('£40,000'));
+      const params = mock.calls[0].params;
+      assert.ok(params.input.includes('£40,000'));
     });
 
     test('Ankit Bahl (35-40 lakhs INR convention) is preserved', async () => {
       const block = findFixtureBlock('Ankit Bahl');
-      fetchMock = mockFetch(() => ({
-        status: 200,
-        body: grokResponse(validExtraction({
+      mock = mockOpenAIResponses(() =>
+        groqResponse(validExtraction({
           company: 'Vedansh Group',
           budget: { raw: '35-40 lakhs', currency: 'INR', min: 3500000, max: 4000000, qualifier: 'range' },
         })),
-      }));
+      );
       const out = await llmService.extractWithFallback(block.message);
       assert.equal(out.state, 'completed');
       assert.equal(out.parsed.budget.raw, '35-40 lakhs');
-      const body = JSON.parse(fetchMock.calls[0].init.body);
-      assert.ok(body.messages[1].content.includes('35-40 lakhs'));
+      const params = mock.calls[0].params;
+      assert.ok(params.input.includes('35-40 lakhs'));
     });
 
     test('Priya Ramanathan (em-dash + multi-project) is preserved', async () => {
       const block = findFixtureBlock('Priya Ramanathan');
-      fetchMock = mockFetch(() => ({
-        status: 200,
-        body: grokResponse(validExtraction({
+      mock = mockOpenAIResponses(() =>
+        groqResponse(validExtraction({
           company: 'Lumen Health',
           projectCount: 2,
           additionalProjectNote: 'Chatbot urgent (6 weeks); React migration can wait until Q1.',
@@ -207,15 +201,15 @@ describe('Unicode preservation', () => {
             qualifier: 'range',
           },
         })),
-      }));
+      );
       const out = await llmService.extractWithFallback(block.message);
       assert.equal(out.state, 'completed');
       assert.equal(out.parsed.projectCount, 2);
       assert.ok(out.parsed.additionalProjectNote.includes('Chatbot'));
       assert.ok(out.parsed.additionalProjectNote.includes('React'));
-      const body = JSON.parse(fetchMock.calls[0].init.body);
-      assert.ok(body.messages[1].content.includes('—')); // em-dash
-      assert.ok(body.messages[1].content.includes('$60k and $90k'));
+      const params = mock.calls[0].params;
+      assert.ok(params.input.includes('—')); // em-dash
+      assert.ok(params.input.includes('$60k and $90k'));
     });
   });
 });
