@@ -41,6 +41,7 @@ import Enquiry from '../models/Enquiry.js';
 import ExtractionVersion from '../models/ExtractionVersion.js';
 import { llmService } from './llm/llmService.js';
 import { applyPriorityToEnquiry } from './scoringService.js';
+import { hasAnyOverride, reapplyOverrides } from './effectiveValueService.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
 
@@ -148,6 +149,15 @@ export async function runExtraction(enquiryId) {
   if (outcome.state === 'completed' && outcome.parsed) {
     // Success — copy the validated model output into effectiveExtraction.
     // We do NOT touch humanOverrides (Phase 6/7 owns that).
+    //
+    // Phase 6 addition: also store a preserved copy in `modelExtraction`
+    // so that human overrides can be cleared (falling back to the model
+    // value) and the UI can show "MODEL value" alongside "CONFIRMED
+    // value". modelExtraction is the immutable model source; the
+    // effective-value resolver merges modelExtraction + humanOverrides
+    // into effectiveExtraction whenever an override changes.
+    //
+    // When NO overrides exist, effectiveExtraction === modelExtraction.
     enquiry.effectiveExtraction = {
       company: outcome.parsed.company ?? null,
       contactName: outcome.parsed.contactName ?? null,
@@ -159,7 +169,28 @@ export async function runExtraction(enquiryId) {
       projectCount: outcome.parsed.projectCount ?? 1,
       additionalProjectNote: outcome.parsed.additionalProjectNote ?? null,
     };
+    enquiry.modelExtraction = {
+      company: outcome.parsed.company ?? null,
+      contactName: outcome.parsed.contactName ?? null,
+      contactEmail: outcome.parsed.contactEmail ?? null,
+      serviceLine: outcome.parsed.serviceLine ?? 'other',
+      budget: outcome.parsed.budget ?? { raw: '', qualifier: 'unknown' },
+      timeline: outcome.parsed.timeline ?? { raw: '' },
+      summary: outcome.parsed.summary ?? '',
+      projectCount: outcome.parsed.projectCount ?? 1,
+      additionalProjectNote: outcome.parsed.additionalProjectNote ?? null,
+    };
     enquiry.isGenuineProjectEnquiry = Boolean(outcome.parsed.isGenuineProjectEnquiry);
+
+    // Phase 6: if any human overrides are already present (e.g. this is
+    // a re-extract on an enquiry the operator previously edited), re-merge
+    // them so effectiveExtraction reflects the override rather than the
+    // fresh model value. Phase 7 will formalise conflict display; Phase 6
+    // only guarantees the merge is consistent so priority is computed
+    // from the correct effective values.
+    if (enquiry.humanOverrides && hasAnyOverride(enquiry.humanOverrides)) {
+      reapplyOverrides(enquiry);
+    }
 
     // Phase 4: compute deterministic priority from the effective extraction.
     // Per Architechure.md §4 Flow A, scoring runs AFTER extraction persists

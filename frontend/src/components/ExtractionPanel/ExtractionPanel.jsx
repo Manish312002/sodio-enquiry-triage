@@ -1,5 +1,5 @@
 /**
- * ExtractionPanel — Phase 5.
+ * ExtractionPanel — Phase 5 + Phase 6.
  *
  * Renders the EXTRACTED block on the right side of the detail view
  * (design.md §7). Handles all extraction states explicitly:
@@ -12,22 +12,31 @@
  *   - extractionState === 'completed'  → field-by-field render of the
  *                                         effectiveExtraction subdocument.
  *
- * Each field is labelled MODEL when there is no human override for it
- * (Phase 6 owns overrides). We do not display CONFIRMED for any value
- * in Phase 5 because no human-confirmation flow exists yet — the
- * operator's instructions explicitly forbid falsely labelling model
- * values as "confirmed".
+ * Phase 6 — inline editing:
+ *   - Each extracted field is rendered via the InlineField component,
+ *     which shows a MODEL chip (when no override is active) or a
+ *     CONFIRMED chip + accent left border (when an override is active).
+ *   - The operator can edit any of the 8 OVERRIDEABLE_FIELDS:
+ *       company, contactName, contactEmail, serviceLine,
+ *       budget, timeline, summary, isGenuineProjectEnquiry
+ *   - Editing dispatches updateEnquiryField, which PATCHes
+ *     /api/enquiries/:id/fields/:field. The backend recomputes the
+ *     effective value and recalculates priority; the returned enquiry
+ *     replaces the selected enquiry in Redux.
+ *   - Clearing an override dispatches clearEnquiryFieldOverride, which
+ *     PATCHes the same endpoint with value=null. The effective value
+ *     falls back to the model extraction.
+ *   - The PRIORITY block below the fields re-renders automatically when
+ *     the enquiry's priority changes (it reads from enquiry.priority,
+ *     which is updated by the slice on fulfilled).
  *
  * SECURITY: original enquiry text and extracted values are all rendered
  * via React's default text escaping. No dangerouslySetInnerHTML.
+ * originalText is NEVER editable through this panel (it's in the SOURCE
+ * panel and is immutable per Rules.md §14).
  */
 import PriorityBadge from '../PriorityBadge/PriorityBadge';
-import {
-  formatServiceLine,
-  formatBudgetDetail,
-  formatTimelineShort,
-  formatGenuine,
-} from '../../features/enquiries/format';
+import InlineField from '../InlineField/InlineField';
 
 /**
  * @param {object} props
@@ -79,38 +88,52 @@ export default function ExtractionPanel({ enquiry }) {
     );
   }
 
-  const e = enquiry.effectiveExtraction;
-
+  // extractionState === 'completed' — render the inline-editable fields.
   return (
     <div className="space-y-4">
       <Section title="EXTRACTED">
-        <p className="font-mono text-micro text-ink-muted tracking-widest mb-3">MODEL</p>
+        <p className="font-mono text-micro text-ink-muted tracking-widest mb-3">
+          Edit any field to apply a human override. Priority recalculates automatically.
+        </p>
         <dl className="space-y-2.5">
-          <FieldRow label="COMPANY" value={e.company} />
-          <FieldRow label="CONTACT" value={e.contactName} />
-          <FieldRow label="EMAIL" value={e.contactEmail} mono />
-          <FieldRow label="SERVICE" value={formatServiceLine(e.serviceLine)} />
-          <FieldRow label="BUDGET" value={formatBudgetDetail(e.budget)} />
-          <FieldRow label="TIMELINE" value={formatTimelineShort(e.timeline) || '—'} />
-          <FieldRow label="SUMMARY" value={e.summary} block />
-          <FieldRow
-            label="GENUINE PROJECT ENQUIRY"
-            value={formatGenuine(enquiry.isGenuineProjectEnquiry)}
-          />
-          {e.projectCount != null && e.projectCount > 1 && (
-            <FieldRow label="PROJECT COUNT" value={String(e.projectCount)} />
-          )}
-          {e.additionalProjectNote && (
-            <FieldRow label="ADDITIONAL PROJECT NOTE" value={e.additionalProjectNote} block />
-          )}
+          <InlineField enquiry={enquiry} field="company" label="COMPANY" />
+          <InlineField enquiry={enquiry} field="contactName" label="CONTACT" />
+          <InlineField enquiry={enquiry} field="contactEmail" label="EMAIL" mono />
+          <InlineField enquiry={enquiry} field="serviceLine" label="SERVICE" />
+          <InlineField enquiry={enquiry} field="budget" label="BUDGET" />
+          <InlineField enquiry={enquiry} field="timeline" label="TIMELINE" />
+          <InlineField enquiry={enquiry} field="summary" label="SUMMARY" block />
+          <InlineField enquiry={enquiry} field="isGenuineProjectEnquiry" label="GENUINE PROJECT ENQUIRY" />
         </dl>
+
+        {/* projectCount + additionalProjectNote are NOT overrideable (Phase 6 boundary).
+            They remain model-only display fields. */}
+        {enquiry.effectiveExtraction.projectCount != null &&
+          enquiry.effectiveExtraction.projectCount > 1 && (
+            <div className="mt-3 pt-3 border-t border-line">
+              <p className="font-mono text-micro text-ink-muted">
+                PROJECT COUNT: {enquiry.effectiveExtraction.projectCount} (model-only, not editable)
+              </p>
+            </div>
+          )}
+        {enquiry.effectiveExtraction.additionalProjectNote && (
+          <div className="mt-2">
+            <p className="font-mono text-micro text-ink-muted">
+              ADDITIONAL PROJECT NOTE:
+            </p>
+            <p className="text-body text-ink mt-1">
+              {enquiry.effectiveExtraction.additionalProjectNote}
+            </p>
+          </div>
+        )}
       </Section>
 
       {enquiry.priority && enquiry.priority.level != null && (
         <Section title="PRIORITY">
           <PriorityBadge priority={enquiry.priority} showReasons />
           <p className="mt-2 font-mono text-micro text-ink-muted">
-            Computed deterministically by the backend (Phase 4). Not editable from the UI.
+            Computed deterministically by the backend from the effective extraction.
+            Recalculated automatically after each human edit. Not directly editable.
           </p>
         </Section>
       )}
@@ -126,30 +149,5 @@ function Section({ title, children }) {
       </div>
       <div className="p-4">{children}</div>
     </section>
-  );
-}
-
-function FieldRow({ label, value, mono = false, block = false }) {
-  const display =
-    value == null || (typeof value === 'string' && value.trim() === '')
-      ? '—'
-      : value;
-  return (
-    <div className={block ? 'block' : 'flex items-baseline gap-4'}>
-      <dt
-        className={`font-mono text-micro tracking-widest text-ink-muted ${
-          block ? 'mb-1' : 'w-44 shrink-0'
-        }`}
-      >
-        {label}
-      </dt>
-      <dd
-        className={`text-body text-ink ${
-          mono ? 'font-mono text-small break-all' : ''
-        } ${display === '—' ? 'text-ink-muted/60' : ''}`}
-      >
-        {display}
-      </dd>
-    </div>
   );
 }

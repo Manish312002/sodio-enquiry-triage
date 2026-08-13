@@ -23,6 +23,12 @@ import { z } from 'zod';
 import * as enquiryService from '../services/enquiryService.js';
 import * as extractionService from '../services/extractionService.js';
 import { recalculatePriorityForEnquiry } from '../services/scoringService.js';
+import {
+  applyHumanOverride,
+  clearHumanOverride,
+  validateFieldValue,
+} from '../services/humanOverrideService.js';
+import { OVERRIDEABLE_FIELDS } from '../services/effectiveValueService.js';
 import { parseEnquiryFile, MAX_FILE_SIZE_BYTES } from '../services/parserService.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
@@ -63,6 +69,29 @@ const updateStatusBodySchema = z
     status: z.enum(['new', 'contacted', 'qualified', 'dropped']),
   })
   .strict();
+
+/**
+ * Phase 6 — PATCH /api/enquiries/:id/fields/:field body schema.
+ *
+ * The body must contain `value` (the override value). `value: null` is
+ * the explicit "clear the override" signal — the service treats null as
+ * "no active override, fall back to the model value".
+ *
+ * The field name is in the URL path (`:field`) and is validated against
+ * OVERRIDEABLE_FIELDS in the service layer. `priority`, `originalText`,
+ * `receivedAt`, `status`, etc. are NOT in the allowlist and will be
+ * rejected with INVALID_FIELD.
+ *
+ * We use `.passthrough()` rather than `.strict()` for the body schema
+ * because the value field's shape varies per field (string / boolean /
+ * object). The per-field validator in humanOverrideService handles the
+ * deep shape check. Zod here only enforces "body has a `value` key".
+ */
+const updateFieldBodySchema = z
+  .object({
+    value: z.any(),
+  })
+  .passthrough();
 
 // --- controllers ---
 
@@ -186,6 +215,82 @@ export const updateStatus = asyncHandler(async (req, res) => {
     });
   }
   const saved = await enquiryService.updateEnquiryStatus(req.params.id, parsed.data.status);
+  res.status(200).json({ enquiry: saved.toApiResponse() });
+});
+
+/**
+ * PATCH /api/enquiries/:id/fields/:field
+ *
+ * Phase 6 — apply a human override to a single extracted field.
+ *
+ * Architechure.md §4 Flow C ("Human correction"):
+ *   Edit field → save override → recalculate priority → return updated enquiry.
+ *
+ * Body: { value: <any> }
+ *   - `value: null` clears the override (falls back to model extraction).
+ *   - `value: <non-null>` sets the override to that value. The shape must
+ *     match the field's expected type (validated by humanOverrideService).
+ *
+ * The field name is validated against OVERRIDEABLE_FIELDS. `priority`,
+ * `originalText`, `receivedAt`, `status`, `extractionState`, `batchId`,
+ * `sender`, etc. are NOT editable through this endpoint. This is the
+ * security boundary: the client cannot inject arbitrary properties into
+ * humanOverrides, cannot directly set priority, and cannot mutate
+ * originalText (Rules.md §14).
+ *
+ * After the override is applied:
+ *   1. `humanOverrides[field]` is set to the value (or null if cleared).
+ *   2. `effectiveExtraction` is recomputed by merging modelExtraction +
+ *      humanOverrides (effectiveValueService.computeEffectiveExtraction).
+ *   3. Priority is recalculated by the existing Phase 4 scoringService
+ *      from the new effectiveExtraction (applyPriorityToEnquiry).
+ *   4. The enquiry is saved and returned.
+ *
+ * The model extraction is NEVER overwritten — it lives in `modelExtraction`
+ * and is preserved unchanged so the operator can later clear the override
+ * and get the model value back.
+ *
+ * 200 -> { enquiry: <updated enquiry response shape> }
+ * 400 on invalid id, invalid field name, or invalid field value
+ * 404 if enquiry not found
+ */
+export const updateField = asyncHandler(async (req, res) => {
+  const { id, field } = req.params;
+
+  // 1. Validate body shape (must have `value` key).
+  const parsed = updateFieldBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    const message =
+      parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') ||
+      'Invalid request body';
+    throw new AppError({
+      message,
+      status: 400,
+      code: 'VALIDATION_ERROR',
+      context: { zodIssues: parsed.error.issues.length },
+    });
+  }
+
+  const value = parsed.data.value;
+
+  // 2. Early field-name rejection (defence in depth — the service also
+  //    checks). This lets us return a clear 400 before touching the DB.
+  if (!OVERRIDEABLE_FIELDS.includes(field)) {
+    throw new AppError({
+      message: `Field "${field}" is not editable. Allowed fields: ${OVERRIDEABLE_FIELDS.join(', ')}.`,
+      status: 400,
+      code: 'INVALID_FIELD',
+      context: { field, allowed: OVERRIDEABLE_FIELDS },
+    });
+  }
+
+  // 3. Apply (or clear) the override. `value === null` clears; any other
+  //    value is validated by humanOverrideService.validateFieldValue.
+  const saved =
+    value === null
+      ? await clearHumanOverride(id, field)
+      : await applyHumanOverride(id, field, value);
+
   res.status(200).json({ enquiry: saved.toApiResponse() });
 });
 
@@ -455,6 +560,7 @@ function toEnquiryResponseShape(o) {
     status: o.status,
     isGenuineProjectEnquiry: o.isGenuineProjectEnquiry ?? null,
     effectiveExtraction: o.effectiveExtraction ?? null,
+    modelExtraction: o.modelExtraction ?? null,
     humanOverrides: o.humanOverrides ?? {},
     priority: o.priority ?? { level: null, score: null, reasons: [] },
     extractionState: o.extractionState,

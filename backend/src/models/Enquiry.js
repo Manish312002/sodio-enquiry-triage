@@ -10,6 +10,18 @@
  *     declared now (with safe defaults) so later phases do not require
  *     schema migrations.
  *
+ * Phase 6 addition:
+ *   - `modelExtraction` is a parallel subdocument to `effectiveExtraction`
+ *     that stores the LATEST SUCCESSFUL MODEL EXTRACTION, untouched by
+ *     human overrides. When a human edits a field, the override is stored
+ *     in `humanOverrides[field]`, the effective value is recomputed by
+ *     merging `modelExtraction` + `humanOverrides` into `effectiveExtraction`,
+ *     and priority is recalculated from the new effectiveExtraction.
+ *   - For enquiries created before Phase 6 (no modelExtraction), the
+ *     effective-value resolver lazily treats effectiveExtraction as the
+ *     model source — so existing records continue to work without
+ *     migration.
+ *
  * Immutability rules enforced at the schema level (Rules.md §14):
  *   - `originalText` is `select: true` but the service layer must refuse to
  *     overwrite it after creation. We also mark it `immutable` in Mongoose
@@ -81,8 +93,17 @@ const humanOverridesSchema = new Schema(
 
 // Human overrides are stored as Mixed so we can record "field X was edited to
 // value Y" (including `null`/deletion) versus "field X has never been edited".
-// The effective-value resolver in Phase 6/7 distinguishes these by checking
-// whether the override key is present (vs. undefined).
+// The effective-value resolver in Phase 6 distinguishes these by checking
+// whether the override value is non-null (active) versus null/absent (no
+// override — fall back to modelExtraction).
+//
+// Override semantics (Phase 6):
+//   humanOverrides[field] === null  → no active override (use modelExtraction)
+//   humanOverrides[field] !== null → active override (use this value)
+//
+// `false`, `0`, and `''` are NON-NULL and therefore count as active overrides.
+// This lets the operator explicitly mark `isGenuineProjectEnquiry = false`
+// or set `company = ''` (cleared) without losing the override.
 
 const prioritySchema = new Schema(
   {
@@ -137,6 +158,21 @@ const enquirySchema = new Schema(
     },
 
     isGenuineProjectEnquiry: { type: Schema.Types.Mixed, default: null },
+
+    // Phase 6 — preserved copy of the latest successful MODEL extraction.
+    // effectiveExtraction (below) is the MERGED value (model + human overrides)
+    // and is what the scoring service reads. modelExtraction holds the
+    // untouched model output so that:
+    //   (a) clearing a human override can restore the model value, and
+    //   (b) the UI can show "MODEL value" alongside "CONFIRMED value".
+    // For enquiries created before Phase 6, modelExtraction is null and the
+    // effective-value resolver lazily treats effectiveExtraction as the model
+    // source (which is correct because Phase 3 wrote model output directly
+    // into effectiveExtraction).
+    modelExtraction: {
+      type: effectiveExtractionSchema,
+      default: null,
+    },
 
     effectiveExtraction: {
       type: effectiveExtractionSchema,
@@ -201,6 +237,7 @@ enquirySchema.methods.toApiResponse = function toApiResponse() {
     status: o.status,
     isGenuineProjectEnquiry: o.isGenuineProjectEnquiry ?? null,
     effectiveExtraction: o.effectiveExtraction ?? null,
+    modelExtraction: o.modelExtraction ?? null,
     humanOverrides: o.humanOverrides ?? {},
     priority: o.priority ?? { level: null, score: null, reasons: [] },
     extractionState: o.extractionState,

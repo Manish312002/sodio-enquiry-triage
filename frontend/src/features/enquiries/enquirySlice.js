@@ -13,6 +13,15 @@
  *   - statusUpdateStatus / statusUpdateError track the status-mutation
  *     lifecycle so the UI can show a per-row "saving…" / inline error.
  *
+ * Phase 6 additions:
+ *   - updateEnquiryField / clearEnquiryFieldOverride thunks handle inline
+ *     field editing. On success they patch BOTH the selected enquiry AND
+ *     the matching queue item (so the queue's priority badge reflects the
+ *     new score without a refetch).
+ *   - fieldUpdateStatus / fieldUpdateError / fieldUpdateId / fieldUpdateField
+ *     track the per-field mutation lifecycle so the InlineField component
+ *     can show "SAVING…" / inline error / disable the input while pending.
+ *
  * Phase 1 retained:
  *   - items[], selectedId, selected, selectedStatus/Error
  *   - createStatus / createError / lastCreatedId
@@ -21,7 +30,9 @@
  *   - system.health / healthStatus / healthError
  *
  * NO scoring logic lives here. Priority is read from enquiry.priority
- * as returned by the backend (Rules.md §9 / Phase 4 boundary).
+ * as returned by the backend (Rules.md §9 / Phase 4 boundary). The
+ * frontend never recomputes priority and never sets it directly — the
+ * PATCH /fields/:field endpoint derives priority server-side.
  */
 import { createSlice } from '@reduxjs/toolkit';
 import {
@@ -30,6 +41,8 @@ import {
   fetchEnquiry,
   fetchEnquiries,
   updateEnquiryStatus,
+  updateEnquiryField,
+  clearEnquiryFieldOverride,
 } from './enquiryThunks';
 
 const initialState = {
@@ -57,6 +70,16 @@ const initialState = {
   statusUpdateStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
   statusUpdateError: null,
   statusUpdateId: null, // which enquiry id is currently being updated
+
+  // Phase 6 — field override mutation lifecycle.
+  // Tracks the in-flight PATCH /fields/:field request so the InlineField
+  // component can show "SAVING…", disable its input, and surface inline
+  // errors. fieldUpdateField lets us know WHICH field on the enquiry is
+  // being updated (so multiple fields don't all show "SAVING…").
+  fieldUpdateStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
+  fieldUpdateError: null,
+  fieldUpdateId: null, // enquiry id
+  fieldUpdateField: null, // field name being updated
 
   // Phase 0 — system health
   system: {
@@ -117,6 +140,15 @@ const enquirySlice = createSlice({
       state.statusUpdateStatus = 'idle';
       state.statusUpdateError = null;
       state.statusUpdateId = null;
+    },
+    // Phase 6 — clear the per-field mutation lifecycle state. Called by
+    // the InlineField component after showing success/error feedback so
+    // the next edit starts from a clean slate.
+    clearFieldUpdateState(state) {
+      state.fieldUpdateStatus = 'idle';
+      state.fieldUpdateError = null;
+      state.fieldUpdateId = null;
+      state.fieldUpdateField = null;
     },
   },
   extraReducers: (builder) => {
@@ -220,6 +252,66 @@ const enquirySlice = createSlice({
         state.statusUpdateError = action.payload ?? { message: 'Unknown error' };
         state.statusUpdateId = null;
       });
+
+    // --- field override (Phase 6) ---
+    // updateEnquiryField and clearEnquiryFieldOverride share the same
+    // lifecycle tracking because they share the same UI surface (the
+    // InlineField component). Either thunk's pending/fulfilled/rejected
+    // event updates fieldUpdateStatus / fieldUpdateId / fieldUpdateField.
+    builder
+      .addCase(updateEnquiryField.pending, (state, action) => {
+        state.fieldUpdateStatus = 'pending';
+        state.fieldUpdateError = null;
+        state.fieldUpdateId = action.meta.arg.id;
+        state.fieldUpdateField = action.meta.arg.field;
+      })
+      .addCase(updateEnquiryField.fulfilled, (state, action) => {
+        state.fieldUpdateStatus = 'succeeded';
+        const updated = action.payload;
+        // Patch the matching queue item in-place so the priority badge
+        // in the queue reflects the new score without a refetch.
+        state.items = state.items.map((e) => (e.id === updated.id ? updated : e));
+        // Patch the selected enquiry if it matches.
+        if (state.selectedId === updated.id) {
+          state.selected = updated;
+        }
+        state.fieldUpdateId = null;
+        state.fieldUpdateField = null;
+      })
+      .addCase(updateEnquiryField.rejected, (state, action) => {
+        state.fieldUpdateStatus = 'failed';
+        state.fieldUpdateError = action.payload ?? { message: 'Unknown error' };
+        state.fieldUpdateId = null;
+        state.fieldUpdateField = null;
+      });
+
+    // clearEnquiryFieldOverride uses the same lifecycle as updateEnquiryField
+    // (it's just updateEnquiryField with value=null under the hood). We
+    // track it separately so the action types are unambiguous, but the
+    // state mutations are identical.
+    builder
+      .addCase(clearEnquiryFieldOverride.pending, (state, action) => {
+        state.fieldUpdateStatus = 'pending';
+        state.fieldUpdateError = null;
+        state.fieldUpdateId = action.meta.arg.id;
+        state.fieldUpdateField = action.meta.arg.field;
+      })
+      .addCase(clearEnquiryFieldOverride.fulfilled, (state, action) => {
+        state.fieldUpdateStatus = 'succeeded';
+        const updated = action.payload;
+        state.items = state.items.map((e) => (e.id === updated.id ? updated : e));
+        if (state.selectedId === updated.id) {
+          state.selected = updated;
+        }
+        state.fieldUpdateId = null;
+        state.fieldUpdateField = null;
+      })
+      .addCase(clearEnquiryFieldOverride.rejected, (state, action) => {
+        state.fieldUpdateStatus = 'failed';
+        state.fieldUpdateError = action.payload ?? { message: 'Unknown error' };
+        state.fieldUpdateId = null;
+        state.fieldUpdateField = null;
+      });
   },
 });
 
@@ -236,6 +328,7 @@ export const {
   toggleSortDir,
   setSortDir,
   clearStatusUpdateState,
+  clearFieldUpdateState,
 } = enquirySlice.actions;
 
 export default enquirySlice.reducer;

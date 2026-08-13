@@ -159,3 +159,123 @@ export function extractionStateLabel(extractionState) {
   if (extractionState === 'failed') return 'FAILED';
   return null;
 }
+
+// --- Phase 6 — human override helpers -------------------------------------
+
+/**
+ * The list of fields the operator can override through the
+ * PATCH /api/enquiries/:id/fields/:field endpoint. Mirrors the backend's
+ * OVERRIDEABLE_FIELDS allowlist. The frontend uses this for iteration and
+ * validation — it does NOT enforce security (the backend is the source of
+ * truth for the allowlist).
+ */
+export const OVERRIDEABLE_FIELDS = Object.freeze([
+  'company',
+  'contactName',
+  'contactEmail',
+  'serviceLine',
+  'budget',
+  'timeline',
+  'summary',
+  'isGenuineProjectEnquiry',
+]);
+
+/**
+ * Check whether a field on an enquiry has an active (non-null) human override.
+ *
+ * Phase 6 override semantics:
+ *   humanOverrides[field] === null  → no active override (use model value)
+ *   humanOverrides[field] !== null → active override (false, 0, '' all count)
+ *
+ * The UI uses this to decide whether to label a field MODEL or CONFIRMED.
+ *
+ * @param {object|null|undefined} humanOverrides
+ * @param {string} field
+ * @returns {boolean}
+ */
+export function hasOverride(humanOverrides, field) {
+  if (!humanOverrides || typeof humanOverrides !== 'object') return false;
+  const v = humanOverrides[field];
+  return v !== null && v !== undefined;
+}
+
+/**
+ * Get the model value for a field. Falls back to effectiveExtraction when
+ * modelExtraction is null (pre-Phase-6 records). For isGenuineProjectEnquiry,
+ * reads the top-level enquiry field (it is not nested under modelExtraction).
+ *
+ * Mirrors the backend effectiveValueService.getModelValue logic so the UI
+ * can show "MODEL value" alongside "CONFIRMED value" without an extra
+ * round-trip.
+ *
+ * @param {object} enquiry
+ * @param {string} field
+ * @returns {unknown}
+ */
+export function getModelValue(enquiry, field) {
+  if (!enquiry) return undefined;
+  if (field === 'isGenuineProjectEnquiry') {
+    // For isGenuineProjectEnquiry, the "model value" is the top-level field
+    // WHEN no override is active. If an override is active, the top-level
+    // field already reflects the override (the backend syncs them). So to
+    // get the true model value, we'd need to look at the latest successful
+    // ExtractionVersion. For Phase 6, we fall back to the top-level value
+    // and let the UI label it MODEL only when no override is active.
+    return enquiry.isGenuineProjectEnquiry ?? null;
+  }
+  const modelSrc =
+    enquiry.modelExtraction && typeof enquiry.modelExtraction === 'object'
+      ? enquiry.modelExtraction
+      : enquiry.effectiveExtraction && typeof enquiry.effectiveExtraction === 'object'
+        ? enquiry.effectiveExtraction
+        : null;
+  if (!modelSrc) return undefined;
+  return modelSrc[field];
+}
+
+/**
+ * Get the effective (displayed) value for a field — i.e. the merged value
+ * the backend stores in effectiveExtraction (or the top-level
+ * isGenuineProjectEnquiry).
+ *
+ * This is what the operator sees in the detail panel. The MODEL value (from
+ * getModelValue) is shown alongside when an override is active, so the
+ * operator can compare "MODEL said X / CONFIRMED is Y".
+ *
+ * @param {object} enquiry
+ * @param {string} field
+ * @returns {unknown}
+ */
+export function getEffectiveValue(enquiry, field) {
+  if (!enquiry) return undefined;
+  if (field === 'isGenuineProjectEnquiry') {
+    return enquiry.isGenuineProjectEnquiry ?? null;
+  }
+  const eff = enquiry.effectiveExtraction;
+  if (!eff || typeof eff !== 'object') return undefined;
+  return eff[field];
+}
+
+/**
+ * Render a value for display in the detail panel. Handles strings, booleans,
+ * numbers, null/undefined, and the budget/timeline subdocument shapes.
+ *
+ * Used by InlineField to show the current effective value when not editing.
+ *
+ * @param {unknown} value
+ * @param {string} field  Field name — used to pick the right formatter.
+ * @returns {string}
+ */
+export function formatFieldValue(value, field) {
+  // isGenuineProjectEnquiry has a meaningful "UNKNOWN" state (null/undefined)
+  // that we want to display, not '—'. formatGenuine(null) → 'UNKNOWN'.
+  if (field === 'isGenuineProjectEnquiry') return formatGenuine(value);
+  if (value === null || value === undefined) return '—';
+  if (field === 'serviceLine') return formatServiceLine(value);
+  if (field === 'budget') return formatBudgetDetail(value);
+  if (field === 'timeline') return formatTimelineShort(value) || '—';
+  if (typeof value === 'boolean') return value ? 'YES' : 'NO';
+  if (typeof value === 'string') return value.length === 0 ? '(empty)' : value;
+  if (typeof value === 'number') return String(value);
+  return String(value);
+}
