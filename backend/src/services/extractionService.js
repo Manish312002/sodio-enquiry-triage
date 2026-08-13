@@ -22,9 +22,10 @@
  *   - ExtractionVersions are APPEND-ONLY. We never update an existing row.
  *   - extractionState transitions: pending → processing → completed|failed
  *
- * Scope (Phase 3):
+ * Scope (Phase 3 + Phase 4):
  *   - Single-enquiry extraction. No batch orchestration (Phase 8).
- *   - No priority scoring (Phase 4). priority.level/score/reasons remain null.
+ *   - After a successful extraction, deterministic priority is computed and
+ *     persisted on enquiry.priority (Phase 4 — scoringService).
  *   - No human override merging (Phase 6/7). effectiveExtraction is set
  *     directly from the model output.
  *
@@ -39,6 +40,7 @@
 import Enquiry from '../models/Enquiry.js';
 import ExtractionVersion from '../models/ExtractionVersion.js';
 import { llmService } from './llm/llmService.js';
+import { applyPriorityToEnquiry } from './scoringService.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
 
@@ -145,8 +147,7 @@ export async function runExtraction(enquiryId) {
   // 5/6. Update the enquiry based on the outcome.
   if (outcome.state === 'completed' && outcome.parsed) {
     // Success — copy the validated model output into effectiveExtraction.
-    // We do NOT touch humanOverrides (Phase 6/7 owns that). We do NOT
-    // touch priority (Phase 4 owns that).
+    // We do NOT touch humanOverrides (Phase 6/7 owns that).
     enquiry.effectiveExtraction = {
       company: outcome.parsed.company ?? null,
       contactName: outcome.parsed.contactName ?? null,
@@ -159,6 +160,14 @@ export async function runExtraction(enquiryId) {
       additionalProjectNote: outcome.parsed.additionalProjectNote ?? null,
     };
     enquiry.isGenuineProjectEnquiry = Boolean(outcome.parsed.isGenuineProjectEnquiry);
+
+    // Phase 4: compute deterministic priority from the effective extraction.
+    // Per Architechure.md §4 Flow A, scoring runs AFTER extraction persists
+    // effectiveExtraction and BEFORE enquiry.save(). This keeps priority
+    // derived from the same effective values the operator sees, and makes
+    // re-scoring trivial (Phase 6 human edits will call the same path).
+    const priority = applyPriorityToEnquiry(enquiry);
+
     enquiry.extractionState = 'completed';
     await enquiry.save();
 
@@ -168,6 +177,8 @@ export async function runExtraction(enquiryId) {
       model: outcome.model,
       versionCount: versions.length,
       isGenuineProjectEnquiry: enquiry.isGenuineProjectEnquiry,
+      priorityLevel: priority.level,
+      priorityScore: priority.score,
       durationMs: outcome.durationMs,
     });
   } else {

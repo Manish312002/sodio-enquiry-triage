@@ -13,12 +13,16 @@
  *   POST /api/enquiries/:id/extract       trigger LLM extraction for one enquiry
  *   GET  /api/enquiries/:id/extractions   list extraction versions for one enquiry
  *
- * Later phases add: PATCH, re-extract, list extractions. Each has its own
+ * Phase 4 endpoint:
+ *   POST /api/enquiries/:id/recalculate-priority  recompute deterministic priority
+ *
+ * Later phases add: PATCH (field edits), re-extract. Each has its own
  * controller method (added in this file when its phase lands).
  */
 import { z } from 'zod';
 import * as enquiryService from '../services/enquiryService.js';
 import * as extractionService from '../services/extractionService.js';
+import { recalculatePriorityForEnquiry } from '../services/scoringService.js';
 import { parseEnquiryFile, MAX_FILE_SIZE_BYTES } from '../services/parserService.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
@@ -344,4 +348,41 @@ export const listExtractions = asyncHandler(async (req, res) => {
     createdAt: o.createdAt,
   }));
   res.status(200).json({ extractions, count: extractions.length });
+});
+
+/**
+ * POST /api/enquiries/:id/recalculate-priority
+ *
+ * Phase 4 — recompute the deterministic priority from the enquiry's CURRENT
+ * effectiveExtraction + isGenuineProjectEnquiry values, and persist the result.
+ *
+ * This endpoint is the approved convenience mechanism for recalculating
+ * priority independently of (re-)extraction. It does NOT:
+ *   - call the LLM
+ *   - modify originalText / receivedAt / sender / status
+ *   - modify effectiveExtraction or humanOverrides
+ *   - implement broader human-edit functionality (Phase 6 owns that)
+ *
+ * Architechure.md §4 Flow C shows the intended long-term shape: a human
+ * edit saves an override, then priority is recalculated. Phase 4 ships
+ * only the recalculation half; the override-saving half lands in Phase 6.
+ * Until then, this endpoint is useful for:
+ *   - re-scoring after a manual DB correction during ops
+ *   - re-scoring the entire backlog after a scoring-rule tweak
+ *   - independent verification that scoring is deterministic
+ *
+ * Response (200):
+ *   {
+ *     enquiry:  <updated enquiry response shape, including new priority>,
+ *     priority: { score, level, reasons }
+ *   }
+ *
+ * 400 on invalid id; 404 if enquiry not found.
+ */
+export const recalculatePriority = asyncHandler(async (req, res) => {
+  const { enquiry, priority } = await recalculatePriorityForEnquiry(req.params.id);
+  res.status(200).json({
+    enquiry: enquiry.toApiResponse(),
+    priority,
+  });
 });
