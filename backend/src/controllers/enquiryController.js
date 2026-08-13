@@ -6,12 +6,17 @@
  *   GET  /api/enquiries/:id     fetch a single enquiry (for refresh retrieval)
  *   GET  /api/enquiries         list recent enquiries (basic; Phase 5 adds filters)
  *
- * Later phases add: PATCH, re-extract, list extractions, import. Each has its
- * own controller method (added in this file when its phase lands).
+ * Phase 2 endpoint:
+ *   POST /api/enquiries/import  parse a sample-enquiries file and persist records
+ *
+ * Later phases add: PATCH, re-extract, list extractions. Each has its own
+ * controller method (added in this file when its phase lands).
  */
 import { z } from 'zod';
 import * as enquiryService from '../services/enquiryService.js';
+import { parseEnquiryFile, MAX_FILE_SIZE_BYTES } from '../services/parserService.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
+import { logger } from '../utils/logger.js';
 
 // --- request schemas (zod) ---
 
@@ -124,4 +129,126 @@ export const listEnquiries = asyncHandler(async (req, res) => {
     updatedAt: o.updatedAt,
   }));
   res.status(200).json({ enquiries, count: enquiries.length });
+});
+
+/**
+ * POST /api/enquiries/import
+ *
+ * Phase 2 — multipart file upload. The uploaded file is parsed by
+ * parserService.parseEnquiryFile() into structured input records. Each
+ * parsed record is persisted via enquiryService.createEnquiry() with
+ * source='file' and the parsed receivedAt timestamp.
+ *
+ * Behaviour (Rules.md §12 Batch / §13 File Handling):
+ *   - One failed block does NOT crash the import. Per-item failures are
+ *     collected and returned in `failed[]`.
+ *   - originalText is preserved EXACTLY (parser does no normalization).
+ *   - No LLM calls. No priority scoring. No batch job creation.
+ *     extractionState defaults to 'pending' — Phase 3 will pick them up.
+ *
+ * Request: multipart/form-data with field `file` containing a .txt file.
+ * Response (200):
+ *   {
+ *     enquiries: [<enquiry response shape>, ...],   // successfully persisted
+ *     failed:    [{ blockIndex, reason }, ...],     // parse/persist failures
+ *     meta:      { fileName, totalBlocks, parsedCount, persistedCount,
+ *                  failedCount, skippedCount, warnings }
+ *   }
+ *
+ * Phase 3 will extend this endpoint to start batch extraction after persist.
+ */
+export const importEnquiries = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new AppError({
+      message: "No file uploaded. Use multipart/form-data with field 'file'.",
+      status: 400,
+      code: 'NO_FILE_UPLOADED',
+    });
+  }
+
+  if (req.file.size > MAX_FILE_SIZE_BYTES) {
+    throw new AppError({
+      message: `File is too large (max ${MAX_FILE_SIZE_BYTES} bytes).`,
+      status: 413,
+      code: 'FILE_TOO_LARGE',
+    });
+  }
+
+  // Decode the uploaded bytes as UTF-8. If decoding fails, reject loudly.
+  let fileContent;
+  try {
+    fileContent = req.file.buffer.toString('utf-8');
+  } catch (err) {
+    throw new AppError({
+      message: `Could not decode file as UTF-8: ${err.message}`,
+      status: 400,
+      code: 'INVALID_ENCODING',
+    });
+  }
+
+  const fileName = req.file.originalname || 'unknown';
+
+  logger.info('Import: parsing file', {
+    fileName,
+    sizeBytes: req.file.size,
+    contentType: req.file.mimetype,
+  });
+
+  // --- Parse (pure function, no I/O) ---
+  const parsed = parseEnquiryFile(fileContent, { fileName });
+
+  logger.info('Import: parse complete', {
+    fileName,
+    totalBlocks: parsed.meta.totalBlocks,
+    parsedCount: parsed.meta.parsedCount,
+    skippedCount: parsed.meta.skippedCount,
+    warnings: parsed.warnings.length,
+  });
+
+  // --- Persist each parsed record ---
+  // One failure does NOT crash the batch (Rules.md §12).
+  const enquiries = [];
+  const failed = [];
+
+  for (const record of parsed.records) {
+    try {
+      const saved = await enquiryService.createEnquiry({
+        source: 'file',
+        originalText: record.originalText,
+        sender: record.sender,
+        receivedAt: record.receivedAt,
+      });
+      enquiries.push(saved.toApiResponse());
+    } catch (err) {
+      // AppError (validation etc.) or Mongoose error. Record the failure
+      // and continue with the next record.
+      failed.push({
+        blockIndex: record.blockIndex,
+        reason: err?.code || err?.name || 'PERSIST_FAILED',
+        message: err?.message || String(err),
+      });
+      logger.warn('Import: per-item persist failed', {
+        blockIndex: record.blockIndex,
+        code: err?.code,
+        message: err?.message,
+      });
+    }
+  }
+
+  // Combine parser-level skipped blocks with persist-level failures.
+  const allFailed = [...parsed.skipped, ...failed];
+
+  res.status(200).json({
+    enquiries,
+    failed: allFailed,
+    meta: {
+      fileName,
+      totalBlocks: parsed.meta.totalBlocks,
+      parsedCount: parsed.meta.parsedCount,
+      persistedCount: enquiries.length,
+      failedCount: allFailed.length,
+      skippedCount: parsed.meta.skippedCount,
+      warnings: parsed.warnings,
+    },
+  });
 });

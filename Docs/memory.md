@@ -55,15 +55,15 @@ Do not switch the stack without an explicit decision.
 
 ## Current Status
 
-**Current phase:** Phase 2 — File Parser (NOT YET STARTED; awaiting user approval)
+**Current phase:** Phase 3 — LLM Extraction (NOT YET STARTED; awaiting user approval)
 
-**Last completed phase:** Phase 1 — Database + Enquiry Ingestion (verified end-to-end, see "Phase 1 — Completed" section below)
+**Last completed phase:** Phase 2 — Sample File Parser / Batch Ingestion Preparation (verified end-to-end against real fixture, see "Phase 2 — Completed" section below)
 
-**Current file being worked on:** none (Phase 1 commit `f17b1a4` done; waiting for Phase 2 approval)
+**Current file being worked on:** none (Phase 2 commit pending; waiting for Phase 3 approval)
 
-**Next file to work on:** Phase 2 deliverables per `Phases.md` — multipart file upload, separator-delimited enquiry parser, one record per block. Do not start until the operator explicitly approves Phase 2.
+**Next file to work on:** Phase 3 deliverables per `Phases.md` — wire Grok/Gemini HTTP, run extraction against persisted enquiries, persist extraction versions, validate against `extractionSchema.js`. Do not start until the operator explicitly approves Phase 3.
 
-**Sample data status:** Operator-supplied `sample-enquiries.pdf` (5 pages, 18 enquiries) received on 2026-08-13 and saved to `test-data/sample-enquiries.pdf` + extracted plaintext to `test-data/sample-enquiries.txt`. This unblocks Phase 2. The 18 enquiries cover every edge case the system must handle (see "Sample data coverage" section below).
+**Sample data status:** Operator-supplied `sample-enquiries.pdf` (5 pages, 20 enquiry blocks) received on 2026-08-13 and saved to `test-data/sample-enquiries.pdf` + extracted plaintext to `test-data/sample-enquiries.txt` (8,185 bytes). Phase 2 parser is verified against this real fixture (19/19 tests pass).
 
 ## Completed Documentation
 
@@ -80,7 +80,7 @@ Do not switch the stack without an explicit decision.
 - [x] Express backend (Phase 0 skeleton; Phase 1 enquiry endpoints added)
 - [x] MongoDB schema/migrations (Phase 1 — `Enquiry` model)
 - [x] Single enquiry ingestion (Phase 1)
-- [ ] Sample file parser (Phase 2)
+- [x] Sample file parser (Phase 2)
 - [ ] LLM extraction adapter (Phase 3; Phase 0 skeletons in place)
 - [ ] Extraction validation (Phase 3)
 - [ ] Deterministic scoring (Phase 4)
@@ -562,3 +562,227 @@ it must not assume a fixed block count.)
 Phase 1 is fully complete, verified against real operator-supplied sample data.
 Phase 2 is unblocked. **Do not start Phase 2 without explicit operator
 approval.**
+
+---
+
+## Phase 2 — Completed
+
+**Commit:** see `git log` for the Phase 2 commit hash.
+**Date:** 2026-08-13
+**Status:** All Phase 2 acceptance criteria (`Phases.md` lines 70-74) verified end-to-end against the REAL operator-supplied fixture. **19/19 tests pass.**
+
+### What was built
+
+**Backend — parser service (`backend/src/services/parserService.js`):**
+- Pure-function parser: takes a UTF-8 string of file content, returns an array
+  of structured input records. No I/O, no side effects — trivially testable.
+- Splits the file on the separator pattern (`^-{3,}[\t ]*\r?\n`, multiline).
+  The real fixture uses exactly 80 dashes per separator; we accept 3+ for
+  tolerance of future fixtures.
+- Per block, identifies the `From:` / `Email:` / `Received:` / `Message:`
+  headers via a regex that **tolerates leading horizontal whitespace AND
+  form-feed characters** (`[ \t\x0c]*`). This is the non-destructive
+  handling for `pdftotext -layout` page-break artifacts — see inspection
+  report below.
+- `originalText` is the bytes between `Message:\n` and the next separator,
+  VERBATIM. No trimming, no normalization. Even a `\x0c` that landed inside
+  Eleanor Vance's message body (PDF page break) is preserved exactly.
+- `receivedAt` is parsed from the `Received: YYYY-MM-DD HH:MM` field as a
+  local-time Date. Falls back to `new Date()` (import time) if parsing
+  fails, with a `parserWarning`.
+- `sender.name` and `sender.email` come from the From: / Email: headers.
+  Missing headers yield `null` + a warning, NOT a crash.
+- Trailing empty block (file ends with `\n\x0c`) is detected and skipped
+  with a `parserWarning`.
+- Returns: `{ records, skipped, warnings, meta: { fileName, totalBlocks, parsedCount, skippedCount, preamble } }`.
+
+**Backend — `Enquiry` model & enquiryService:**
+- `enquiryService.createEnquiry` extended to accept an optional `receivedAt`
+  Date parameter. Phase 1 paste calls omit it (defaults to now); Phase 2
+  file imports pass the parsed source timestamp (Rules.md §14: source
+  timestamp is preserved).
+- `sender.email` validation is now **source-aware**:
+  - `source='paste'`: strict — invalid email throws `INVALID_SENDER_EMAIL`
+    (Phase 1 behavior preserved).
+  - `source='file'`: tolerant — invalid email (e.g. Vish's `"n/a"`) is
+    downgraded to `null` with a logged warning. The record still persists.
+    This implements Rules.md §12 ("one failed item must not crash the
+    whole batch") and §13 ("blank/short messages do not crash the import")
+    at the field level.
+
+**Backend — import endpoint (`POST /api/enquiries/import`):**
+- `backend/src/middleware/uploadMiddleware.js` — multer 2.x memory-storage
+  middleware. 5 MiB max file size. Accepts `.txt` / `.md` only (PDFs must
+  be converted via `pdftotext -layout` first — see `test-data/`).
+- `backend/src/controllers/enquiryController.js` — new `importEnquiries`
+  handler. Multipart file upload → decode UTF-8 → `parseEnquiryFile()` →
+  loop over parsed records calling `enquiryService.createEnquiry()` with
+  `source='file'`. One failed record does NOT crash the batch — failures
+  are collected into `failed[]` and the rest continue.
+- `backend/src/routes/enquiryRoutes.js` — `POST /import` mounted BEFORE
+  `GET /:id` so Express does not match "import" as an id parameter.
+- Response shape (200):
+  ```json
+  {
+    "enquiries": [<enquiry response shape>, ...],
+    "failed":    [{ "blockIndex": N, "reason": "..." }, ...],
+    "meta":      { "fileName", "totalBlocks", "parsedCount",
+                   "persistedCount", "failedCount", "skippedCount",
+                   "warnings": [...] }
+  }
+  ```
+
+**Documentation:**
+- `Docs/phase2-inspection-report.md` — full inspection of the real fixture
+  before any code was written. Documents: separator format, block count,
+  headers, encoding, whitespace, special characters, and **3 ambiguities**
+  found in the real file (form-feed artifacts, trailing empty block,
+  Vish's "n/a" email placeholder) with the proposed non-destructive
+  handling for each.
+
+### Fixture inspection findings (see `Docs/phase2-inspection-report.md`)
+
+| # | Finding | Detail |
+|---|---|---|
+| 1 | Separator | Exactly 80 dashes per separator line, 21 separators, all uniform |
+| 2 | Block count | **20 real enquiries** (1 preamble + 20 enquiries + 1 trailing empty) |
+| 3 | Headers | `From:` / `Email:` / `Received:` / `Message:` per block; preamble is "SAMPLE ENQUIRIES — Sodio Task" (skipped) |
+| 4 | Encoding | Pure LF (Unix), no BOM, valid UTF-8 |
+| 5 | Whitespace | 22 blank lines between blocks; file ends with `\n\x0c` (no trailing newline) |
+| 6 | Special chars | 15 non-ASCII chars: em-dashes, Spanish accents (`í ó ç`), `£ €`, `¿`, `🙏` emoji |
+| 7 | **AMBIGUITY** | **3 form-feed (`\x0c`) characters** inserted by `pdftotext` at PDF page boundaries — see inspection report §7 |
+
+### Ambiguities found in the real file (reported before parser design)
+
+1. **Form-feed (`\x0c`) between headers.** Block 5 (Miguel Santana) has
+   `\x0cEmail:` (form-feed glued to start of Email: line). Block 10 (Priya
+   Ramanathan) has `\x0cMessage:`. A strict `^Email:` regex would fail.
+   **Handling:** header regex allows optional leading `[ \t\x0c]*`. Form
+   feeds BETWEEN headers are consumed; form feeds INSIDE message bodies
+   are preserved verbatim (Eleanor Vance's block has one — it is preserved
+   in her `originalText`).
+
+2. **Trailing empty block.** The file ends with `---...\n\x0c`, creating
+   a phantom 21st block containing only a form feed. A naive parser would
+   crash on this with "empty originalText".
+   **Handling:** blocks with only whitespace (including `\x0c`) are
+   detected and skipped with a `parserWarning`.
+
+3. **Vish's "n/a" email.** Block 17 (Website Contact Form) has `Email: n/a`
+   — a placeholder meaning "not applicable". Strict email validation would
+   reject this and crash the import.
+   **Handling:** for `source='file'`, invalid emails are downgraded to
+   `null` with a logged warning. The record still persists. The original
+   raw value `"n/a"` is preserved in `originalText` (it appears in the
+   Message: body too because the contact form's full output was captured).
+
+### Verification results — all green
+
+Test script: `/home/z/my-project/scripts/phase2-test.sh` (19 tests)
+Wipe script: `/home/z/my-project/scripts/wipe-file-enquiries.py`
+Backend start: `/home/z/my-project/scripts/start-phase2-be.sh`
+
+| # | Test | Result |
+|---|---|---|
+| 1 | `POST /api/enquiries/import` accepts the file as-is | HTTP 200, 21,766-byte JSON response |
+| 2 | Total enquiry count = 20 | parsedCount=20, persistedCount=20 |
+| 3 | Every enquiry has non-empty originalText | PASS — all 20 have non-empty originalText |
+| 4 | originalText round-trips byte-for-byte | PASS — every record's originalText matches the bytes between `Message:\n` and the next separator in the source file |
+| 5 | Prompt-injection text remains plain data | PASS — `status:'new'`, `extractionState:'pending'`, `priority.level:null`, `priority.score:null`, `effectiveExtraction.serviceLine:'other'` (default, NOT 'ai' as the injection tried to demand) |
+| 6 | Spanish/accented characters intact | PASS — `Buenos días`, `clínica`, `móvil`, `25.000 €`, `¿Pueden ayudarnos?` all preserved |
+| 7 | £, €, $, INR/lakh text intact | PASS — `£40,000` (Rachel), `25.000 €` (Miguel), `$80k` (Fontaine), `35-40 lakhs` (Ankit) all preserved |
+| 8 | Multi-project enquiry (Priya) intact | PASS — chatbot + React migration, `$60k and $90k`, em-dash all preserved |
+| 9 | Short "call me" enquiry intact | PASS — 7 chars + trailing whitespace, exactly as in source |
+| 10a | Detailed enquiry (Eleanor, £400k) intact | PASS — all key phrases preserved, including the `\x0c` form-feed inside the body (Rules.md §14: originalText is immutable) |
+| 10b | Emergency enquiry (Operations) intact | PASS — "tenant portal down", "pay whatever it takes", "today" all preserved |
+| 11 | Trailing empty block (block 21) skipped, not crashed | PASS — 1 skipped block with `reason: "empty block (whitespace/form-feed only)"` |
+| 12 | Vish's "n/a" email downgraded to null | PASS — `sender.email:null`, enquiry still persisted with full message body |
+| 12b | Warning logged for Vish's n/a email | PASS — `"block 17: sender email \"n/a\" does not look like an email"` in `meta.warnings` |
+| 13 | All records `source='file'` | PASS |
+| 13b | All records `extractionState='pending'` (no LLM calls) | PASS — Phase 2 makes zero LLM calls |
+| 14 | `receivedAt` preserved from source file | PASS — Rachel's `receivedAt` = `2026-07-14T09:22:00.000Z` (from `Received:` header, NOT import time) |
+| 15 | No LLM calls (all extraction fields at defaults) | PASS — `company:null`, `contactName:null`, `serviceLine:'other'`, `budget.qualifier:'unknown'`, `summary:''`, `isGenuineProjectEnquiry:null` for all 20 records |
+| 16 | No priority computed | PASS — `priority.level:null`, `priority.score:null`, `priority.reasons:[]` for all 20 records |
+| 17 | All 20 sender names match From: header values | PASS — exact 1:1 match in order |
+
+### Commands executed (in order)
+
+1. `cat Docs/Phases.md` — re-read Phase 2 section (lines 57-76)
+2. `grep Architechure.md` for `parser` / `import` / API surface
+3. `grep Rules.md` for `original` / `verbatim` / `separator` / `parser` rules
+4. `Read backend/src/models/Enquiry.js`, `services/enquiryService.js`, `controllers/enquiryController.js`, `routes/enquiryRoutes.js`, `app.js`, `middleware/errorHandler.js`, `package.json` — understand Phase 1 integration points
+5. Write `/home/z/my-project/scripts/inspect-sample.py` — Python fixture inspector
+6. `python3 /home/z/my-project/scripts/inspect-sample.py` — produced the inspection report (saved to `Docs/phase2-inspection-report.md`)
+7. Write `Docs/phase2-inspection-report.md` — full inspection report with 7-point analysis + ambiguity handling decisions
+8. `cd backend && npm install multer@^2.0.0` — added multer 2.2.0 (security: 2.x patches 1.x vulnerabilities)
+9. Write `backend/src/services/parserService.js` — pure-function parser (180 lines)
+10. `node --check src/services/parserService.js` — OK
+11. Edit `backend/src/services/enquiryService.js` — added optional `receivedAt` parameter, source-aware email validation
+12. `node --check src/services/enquiryService.js` — OK
+13. Write `backend/src/middleware/uploadMiddleware.js` — multer config + error wrapper
+14. `node --check src/middleware/uploadMiddleware.js` — OK
+15. Edit `backend/src/controllers/enquiryController.js` — added `importEnquiries` handler (120 lines)
+16. `node --check src/controllers/enquiryController.js` — OK
+17. Edit `backend/src/routes/enquiryRoutes.js` — mounted `POST /import` before `GET /:id`
+18. `node --check src/routes/enquiryRoutes.js` — OK
+19. Write `/home/z/my-project/scripts/start-phase2-be.sh` — persistent backend starter (uses `nohup` + `disown` + pidfile)
+20. `bash /home/z/my-project/scripts/start-phase2-be.sh` — backend healthy after 51s (Mongoose 8.24 import latency)
+21. `curl -X POST /api/enquiries/import -F "file=@test-data/sample-enquiries.txt"` — first import attempt: 19/20 persisted, 1 failed (Vish's `n/a` email triggered strict `INVALID_SENDER_EMAIL`)
+22. **Bug fix:** made `sender.email` validation source-aware (strict for paste, tolerant for file). Re-tested: 20/20 persisted.
+23. Write `/home/z/my-project/scripts/phase2-test.sh` — 19-test suite against the real fixture
+24. Write `/home/z/my-project/scripts/wipe-file-enquiries.py` — pymongo script to wipe file-sourced records between test runs
+25. First test run: 17/19 passed. Two failures were **test-assertion bugs**, not parser bugs:
+    - TEST 10a: looked for `'architectural workflows'` as a substring, but the source has `'architectural\nworkflows'` (split across line)
+    - TEST 12: looked for `🙏` emoji in originalText, but the emoji is on a separate line BETWEEN Received: and Message: (likely a captcha field) — correctly NOT part of originalText
+26. Fixed both assertions. Re-ran: **19/19 PASS.**
+27. `cd frontend && npm run build` — frontend still builds cleanly (103 modules, 234KB JS, 10.84KB CSS) — no regression
+28. `bash /home/z/my-project/scripts/phase1-test.sh` — Phase 1 tests still pass (TEST 7 confirms paste-source invalid emails still return `INVALID_SENDER_EMAIL` — source-aware change did not break Phase 1 contract)
+29. Final clean run: wiped file records, re-imported, all 19 tests pass
+30. Updated `Docs/memory.md` (this section + status + checkboxes)
+31. `git add` + `git commit -m "Phase 2: sample file parser + batch ingestion preparation"`
+32. Create Phase 2 download archive
+33. STOP — await explicit Phase 3 approval
+
+### Decisions made during Phase 2
+
+1. **Parser is a pure function.** Takes a string, returns records. No I/O, no side effects. This makes it trivially testable and reusable — Phase 3's batch extraction will call the parser via the import endpoint, then loop over the persisted records.
+2. **Form-feed (`\x0c`) handling is non-destructive.** The header regex consumes `\x0c` characters that appear BETWEEN headers (PDF page-break artifacts), but NEVER touches message bodies. If a `\x0c` ever appears inside a message body (as it does in Eleanor Vance's block), it is preserved verbatim per Rules.md §14.
+3. **`originalText` preserves trailing whitespace.** The split captures the bytes between `Message:\n` and the next separator, including any trailing blank line. This is intentional — Rules.md §14 says "original enquiry text is immutable" and §13 says "preserve the original uploaded content during parsing." No stripping, no normalization.
+4. **`receivedAt` is preserved from the source file.** Phase 2 imports use the parsed `Received: YYYY-MM-DD HH:MM` field as the `receivedAt` Date. This implements Rules.md §14 ("source timestamp is preserved"). Phase 1 paste calls still default to `new Date()` (no source timestamp available).
+5. **Source-aware email validation.** Paste-source invalid emails throw `INVALID_SENDER_EMAIL` (Phase 1 behavior preserved). File-source invalid emails (e.g. Vish's `"n/a"`) are downgraded to `null` with a warning, so the record still persists. This implements Rules.md §12 ("one failed item must not crash the whole batch") at the field level.
+6. **multer 2.x (not 1.x).** 1.x has known vulnerabilities patched in 2.x. Installed `multer@^2.0.0` (resolved to 2.2.0).
+7. **Memory storage (not disk).** The parser is a pure function over a UTF-8 string, so multer uses `memoryStorage`. No temp files to clean up. The 5 MiB limit is generous (sample fixture is 8 KB).
+8. **`POST /import` mounted before `GET /:id`.** Express matches routes in registration order. If `/:id` came first, "import" would be matched as an id parameter and the request would 404 with `INVALID_ID`.
+9. **No batch job creation yet.** Per Phase 2 scope: parse + persist only. No `batchId` is set on the records (it remains `null`). Phase 3 will create batch jobs and assign `batchId` to records being extracted.
+10. **No LLM calls, no priority scoring.** All 20 records have `extractionState:'pending'`, `priority.level:null`, `priority.score:null`. Phase 3 will pick them up.
+
+### Known limitations / blockers
+
+- **Sandbox resets wipe `/home/z/mongodb/`.** mongod must be re-downloaded on each session restart. The `start-phase2-be.sh` script does not auto-download mongod — it assumes mongod is already running. If `pgrep -f mongod` fails, run the Phase 0 mongod bootstrap first.
+- **Mongoose 8.24 import latency on this sandbox.** Backend takes ~50s to boot from cold. The `start-phase2-be.sh` script waits up to 90s for health.
+- **No file-upload UI yet.** Phase 2 only adds the backend `POST /api/enquiries/import` endpoint. The frontend UI for uploading a file lands in Phase 5 (triage console) or Phase 8 (batch progress UI), per `Phases.md`. For now, the endpoint is testable via `curl -F "file=@..."`.
+- **Re-importing creates duplicate records.** The parser is idempotent (same file → same parsed records), but persist is NOT idempotent (re-importing creates new records with new ObjectIds). Phase 3 may add dedup based on `(sender.email, receivedAt, hash(originalText))` if needed.
+- **No PDF parsing.** The parser accepts `.txt` only. PDFs must be converted via `pdftotext -layout` first (this is how `test-data/sample-enquiries.txt` was generated). The operator already did this; future PDF uploads would need a pre-processing step. Phase 9 (security hardening) or Phase 11 (polish) may add server-side PDF→text conversion if needed.
+
+### Files created / changed in this phase
+
+**Created (5):**
+- `backend/src/services/parserService.js` — pure-function parser
+- `backend/src/middleware/uploadMiddleware.js` — multer config + error wrapper
+- `Docs/phase2-inspection-report.md` — fixture inspection report (pre-parser)
+- `/home/z/my-project/scripts/inspect-sample.py` — Python fixture inspector
+- `/home/z/my-project/scripts/phase2-test.sh` — 19-test suite against real fixture
+- `/home/z/my-project/scripts/wipe-file-enquiries.py` — pymongo wipe script
+- `/home/z/my-project/scripts/start-phase2-be.sh` — persistent backend starter
+
+**Changed (4):**
+- `backend/src/services/enquiryService.js` — added optional `receivedAt`; source-aware email validation
+- `backend/src/controllers/enquiryController.js` — added `importEnquiries` handler
+- `backend/src/routes/enquiryRoutes.js` — mounted `POST /import` before `GET /:id`
+- `backend/package.json` — added `multer@^2.0.0` dependency
+
+### Status
+
+Phase 2 is fully complete, verified against the real operator-supplied fixture.
+**19/19 tests pass.** Phase 1 tests still pass (no regression). Frontend still
+builds cleanly. **Do not start Phase 3 without explicit operator approval.**

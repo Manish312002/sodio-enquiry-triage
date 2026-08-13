@@ -29,13 +29,19 @@ export const MAX_ORIGINAL_TEXT_CHARS = 100_000;
  * Persist a new enquiry. Phase 1 only stores the immutable source data;
  * `status` defaults to `new`, `extractionState` defaults to `pending`.
  *
+ * Phase 2 extension: accepts an optional `receivedAt` Date so file imports
+ * can preserve the source timestamp from the parsed `Received:` header
+ * (Rules.md §14: "Source timestamp is preserved"). If omitted, defaults to
+ * the current time (Phase 1 behaviour for paste).
+ *
  * @param {object} input
  * @param {'paste'|'file'} input.source
  * @param {string} input.originalText  Verbatim; never trimmed.
  * @param {{name?: string, email?: string}} [input.sender]
+ * @param {Date} [input.receivedAt]  Optional source timestamp (Phase 2).
  * @returns {Promise<import('../models/Enquiry.js').default>}
  */
-export async function createEnquiry({ source, originalText, sender }) {
+export async function createEnquiry({ source, originalText, sender, receivedAt } = {}) {
   if (!source || !['paste', 'file'].includes(source)) {
     throw new AppError({
       message: 'Invalid source. Allowed: paste, file.',
@@ -71,6 +77,8 @@ export async function createEnquiry({ source, originalText, sender }) {
   }
 
   // Sender is optional for Phase 1 (the paste UI does not require it).
+  // Phase 2 file imports may yield sender values like "n/a" or empty
+  // strings when the source file has no real email for a block.
   const senderDoc =
     sender && typeof sender === 'object'
       ? {
@@ -80,19 +88,53 @@ export async function createEnquiry({ source, originalText, sender }) {
       : { name: null, email: null };
 
   // Basic email shape check (server-side). We do not require RFC 5322 here.
+  //
+  // Source-aware handling:
+  //   - source='paste': strict. Reject with 400 INVALID_SENDER_EMAIL.
+  //     Phase 1's paste UI explicitly validates this; a bad email here is
+  //     a real user error.
+  //   - source='file': tolerant. The source file may contain placeholders
+  //     like "n/a" (see Vish's contact-form enquiry in the sample fixture).
+  //     Rather than crashing the whole import (Rules.md §12: one failed
+  //     item must not crash the whole batch), we downgrade the email to
+  //     null and log a warning. The original raw value is preserved in
+  //     originalText, so no information is lost.
   if (senderDoc.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderDoc.email)) {
-    throw new AppError({
-      message: 'sender.email does not look like an email address.',
-      status: 400,
-      code: 'INVALID_SENDER_EMAIL',
+    if (source === 'paste') {
+      throw new AppError({
+        message: 'sender.email does not look like an email address.',
+        status: 400,
+        code: 'INVALID_SENDER_EMAIL',
+      });
+    }
+    // source === 'file' — downgrade to null with a warning.
+    logger.warn('File import: sender email failed shape check; downgrading to null', {
+      originalValue: senderDoc.email,
     });
+    senderDoc.email = null;
+  }
+
+  // receivedAt: Phase 2 file imports pass the parsed source timestamp.
+  // Phase 1 paste omits it, so we default to now. We validate that it's a
+  // real Date — if a caller passes a string, we coerce; if invalid, we
+  // fall back to now (defensive — never crash the import over a bad date).
+  let finalReceivedAt;
+  if (receivedAt === undefined || receivedAt === null) {
+    finalReceivedAt = new Date();
+  } else if (receivedAt instanceof Date) {
+    finalReceivedAt = Number.isNaN(receivedAt.getTime()) ? new Date() : receivedAt;
+  } else if (typeof receivedAt === 'string') {
+    const parsed = new Date(receivedAt);
+    finalReceivedAt = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  } else {
+    finalReceivedAt = new Date();
   }
 
   const enquiry = new Enquiry({
     source,
     originalText,
     sender: senderDoc,
-    receivedAt: new Date(),
+    receivedAt: finalReceivedAt,
     status: 'new',
     extractionState: 'pending',
   });
