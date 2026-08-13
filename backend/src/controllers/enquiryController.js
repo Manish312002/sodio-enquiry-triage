@@ -29,6 +29,7 @@ import {
   validateFieldValue,
 } from '../services/humanOverrideService.js';
 import { OVERRIDEABLE_FIELDS } from '../services/effectiveValueService.js';
+import { reExtract } from '../services/reExtractService.js';
 import { parseEnquiryFile, MAX_FILE_SIZE_BYTES } from '../services/parserService.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
@@ -292,6 +293,166 @@ export const updateField = asyncHandler(async (req, res) => {
       : await applyHumanOverride(id, field, value);
 
   res.status(200).json({ enquiry: saved.toApiResponse() });
+});
+
+/**
+ * POST /api/enquiries/:id/re-extract
+ *
+ * Phase 7 — safe re-extraction of an enquiry.
+ *
+ * Architechure.md §4 Flow D ("Re-extraction"):
+ *   User clicks Re-extract → POST /api/enquiries/:id/re-extract →
+ *   Create new extraction version → Grok → Gemini fallback →
+ *   Validate → Compare with human overrides → Keep human-controlled
+ *   fields → Expose conflicts → Recalculate priority → Return.
+ *
+ * The critical invariant (Rules.md §11):
+ *   A re-extraction is a new version, NOT an overwrite. Existing human
+ *   overrides are PRESERVED. The new model extraction is stored as a new
+ *   ExtractionVersion row (append-only) AND becomes the new
+ *   `enquiry.modelExtraction` (the latest model output). The
+ *   `effectiveExtraction` is recomputed by merging the new modelExtraction
+ *   with the preserved humanOverrides (overrides win).
+ *
+ * Conflicts are detected per field: a conflict exists when an active
+ * human override differs from the new model value. The conflicts array
+ * is returned in the response so the UI can surface the operator decision
+ * (Keep confirmed / Accept new model) for each conflicted field.
+ *
+ * Failure behavior (Rules.md §12):
+ *   If re-extraction fails (both Groq and Gemini fail, or INVALID_OUTPUT),
+ *   the existing modelExtraction, effectiveExtraction, humanOverrides, and
+ *   priority are ALL preserved unchanged. Only extractionState transitions
+ *   to 'failed'. The operator can retry.
+ *
+ * SECURITY:
+ *   - The client cannot specify provider, model, version, or timestamp.
+ *     The server controls all of these.
+ *   - The client cannot submit arbitrary model values as if they came from
+ *     Groq/Gemini. The LLM service is the only source of model values.
+ *   - originalText is NEVER modified (immutable per Rules.md §14).
+ *   - The client cannot directly set priority. Priority is always derived
+ *     from the effective extraction by the deterministic scoring service.
+ *
+ * Response (200):
+ *   {
+ *     enquiry:   <updated enquiry response shape>,
+ *     versions:  [<new extraction version response shape>, ...],
+ *     outcome:   { state, provider, model, errorCode, errorMessage,
+ *                  durationMs, attempts: [...] },
+ *     conflicts: [{ field, humanValue, newModelValue, hasConflict }, ...]
+ *   }
+ *
+ * 400 on invalid id; 404 if enquiry not found; 409 if already processing.
+ */
+export const reExtractEnquiry = asyncHandler(async (req, res) => {
+  const { enquiry, versions, outcome, conflicts } = await reExtract(req.params.id);
+
+  res.status(200).json({
+    enquiry: enquiry.toApiResponse(),
+    versions: versions.map((v) => v.toApiResponse()),
+    outcome: {
+      state: outcome.state,
+      provider: outcome.provider,
+      model: outcome.model,
+      errorCode: outcome.errorCode,
+      errorMessage: outcome.errorMessage,
+      durationMs: outcome.durationMs,
+      attempts: outcome.attempts.map((a) => ({
+        provider: a.provider,
+        model: a.model,
+        state: a.state,
+        errorCode: a.errorCode,
+        errorMessage: a.errorMessage,
+        durationMs: a.durationMs,
+      })),
+    },
+    conflicts,
+  });
+});
+
+/**
+ * POST /api/enquiries/:id/fields/:field/accept-model
+ *
+ * Phase 7 — explicit "accept the new model value" action for a conflicted
+ * field.
+ *
+ * After a re-extraction produces a model value that conflicts with an
+ * active human override, the operator can either:
+ *   - Keep the confirmed (human) value  → no API call (override stays)
+ *   - Accept the new model value         → POST /fields/:field/accept-model
+ *
+ * "Accept new model" semantics (Rules.md §11, Architechure.md §7):
+ *   - The human override for this field is CLEARED (set to null).
+ *   - The effective value falls back to the latest modelExtraction value
+ *     (which is the new model value, since re-extraction updated
+ *     modelExtraction to the latest output).
+ *   - Priority is recalculated from the new effective extraction.
+ *
+ * This endpoint is semantically distinct from `PATCH /fields/:field` with
+ * `value: null` (which also clears the override). The distinction is
+ * intentional and audit-friendly: "accept-model" records the operator's
+ * explicit decision to adopt the new model value after a re-extraction
+ * conflict, whereas "clear" simply removes the override without that
+ * context. Both paths converge on the same `clearHumanOverride` service
+ * call — the data result is identical, only the API surface differs.
+ *
+ * IMPORTANT: This action is EXPLICIT. The system NEVER automatically
+ * accepts a new model value merely because re-extraction succeeded.
+ * The operator must click [Accept new model] for each conflicted field
+ * individually.
+ *
+ * The field name is validated against OVERRIDEABLE_FIELDS. `priority`,
+ * `originalText`, `receivedAt`, `status`, etc. are rejected with
+ * INVALID_FIELD (defence in depth — the service also checks).
+ *
+ * Response (200):
+ *   {
+ *     enquiry: <updated enquiry response shape>,
+ *     acceptedField: <field name>,
+ *     newEffectiveValue: <the new effective value for this field>
+ *   }
+ *
+ * 400 on invalid id or invalid field; 404 if enquiry not found.
+ */
+export const acceptNewModelValue = asyncHandler(async (req, res) => {
+  const { id, field } = req.params;
+
+  // 1. Early field-name rejection (defence in depth — the service also
+  //    checks). This lets us return a clear 400 before touching the DB.
+  if (!OVERRIDEABLE_FIELDS.includes(field)) {
+    throw new AppError({
+      message: `Field "${field}" is not editable. Allowed fields: ${OVERRIDEABLE_FIELDS.join(', ')}.`,
+      status: 400,
+      code: 'INVALID_FIELD',
+      context: { field, allowed: OVERRIDEABLE_FIELDS },
+    });
+  }
+
+  // 2. Clear the override. After clearing, the effective value falls back
+  //    to enquiry.modelExtraction[field] (the latest model output, which
+  //    was updated by the most recent re-extraction). Priority is
+  //    recalculated by applyPriorityToEnquiry inside clearHumanOverride.
+  const saved = await clearHumanOverride(id, field);
+
+  // 3. Read the new effective value for the response so the UI can confirm.
+  const newEffectiveValue =
+    field === 'isGenuineProjectEnquiry'
+      ? saved.isGenuineProjectEnquiry
+      : saved.effectiveExtraction?.[field];
+
+  logger.info('acceptNewModelValue: override cleared, new model value adopted', {
+    enquiryId: String(saved._id),
+    field,
+    newEffectiveValue:
+      typeof newEffectiveValue === 'string' ? newEffectiveValue.slice(0, 80) : newEffectiveValue,
+  });
+
+  res.status(200).json({
+    enquiry: saved.toApiResponse(),
+    acceptedField: field,
+    newEffectiveValue,
+  });
 });
 
 /**

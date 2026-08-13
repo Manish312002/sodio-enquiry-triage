@@ -42,13 +42,15 @@
  */
 import { useState, useEffect, useRef, forwardRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { updateEnquiryField, clearEnquiryFieldOverride } from '../../features/enquiries/enquiryThunks';
-import { clearFieldUpdateState } from '../../features/enquiries/enquirySlice';
+import { updateEnquiryField, clearEnquiryFieldOverride, acceptNewModelValue } from '../../features/enquiries/enquiryThunks';
+import { clearFieldUpdateState, clearAcceptModelState, acknowledgeConflict } from '../../features/enquiries/enquirySlice';
 import {
   hasOverride,
   getModelValue,
   getEffectiveValue,
   formatFieldValue,
+  hasConflict,
+  getNewModelValue,
 } from '../../features/enquiries/format';
 
 const SERVICE_LINE_OPTIONS = [
@@ -86,14 +88,36 @@ export default function InlineField({ enquiry, field, label, block = false, mono
   const fieldUpdateField = useSelector((s) => s.enquiries.fieldUpdateField);
   const fieldUpdateError = useSelector((s) => s.enquiries.fieldUpdateError);
 
+  // Phase 7 — re-extraction conflict state.
+  const reExtractConflicts = useSelector((s) => s.enquiries.reExtractConflicts);
+  const acceptModelStatus = useSelector((s) => s.enquiries.acceptModelStatus);
+  const acceptModelId = useSelector((s) => s.enquiries.acceptModelId);
+  const acceptModelField = useSelector((s) => s.enquiries.acceptModelField);
+  const acceptModelError = useSelector((s) => s.enquiries.acceptModelError);
+
   const overridden = hasOverride(enquiry?.humanOverrides, field);
   const effectiveValue = getEffectiveValue(enquiry, field);
   const modelValue = getModelValue(enquiry, field);
+
+  // Phase 7 — check if this specific field has an active conflict.
+  // We read from the Redux conflicts array (populated by the re-extract
+  // response) rather than recomputing locally, because the conflicts array
+  // represents the operator's pending decisions. Once the operator resolves
+  // a conflict (accept or keep), it's removed from the array.
+  const conflict = reExtractConflicts.find((c) => c.field === field);
+  const hasActiveConflict = Boolean(conflict);
+  const newModelValue = conflict?.newModelValue;
 
   const isThisPending =
     fieldUpdateStatus === 'pending' && fieldUpdateId === enquiry?.id && fieldUpdateField === field;
   const isThisFailed =
     fieldUpdateStatus === 'failed' && fieldUpdateId === enquiry?.id && fieldUpdateField === field;
+
+  // Phase 7 — accept-model lifecycle for this specific field.
+  const isThisAccepting =
+    acceptModelStatus === 'pending' && acceptModelId === enquiry?.id && acceptModelField === field;
+  const isThisAcceptFailed =
+    acceptModelStatus === 'failed' && acceptModelId === enquiry?.id && acceptModelField === field;
 
   // Local draft state for the input. Initialised from the effective value
   // when editing starts. Updated by the input's onChange handler. Sent to
@@ -131,6 +155,18 @@ export default function InlineField({ enquiry, field, label, block = false, mono
     return undefined;
   }, [fieldUpdateStatus, dispatch]);
 
+  // Phase 7 — auto-clear the accept-model lifecycle state shortly after
+  // a succeeded/failed result.
+  useEffect(() => {
+    if (acceptModelStatus === 'succeeded' || acceptModelStatus === 'failed') {
+      const tid = setTimeout(() => {
+        dispatch(clearAcceptModelState());
+      }, 1500);
+      return () => clearTimeout(tid);
+    }
+    return undefined;
+  }, [acceptModelStatus, dispatch]);
+
   function handleStartEdit() {
     setEditing(true);
   }
@@ -165,6 +201,35 @@ export default function InlineField({ enquiry, field, label, block = false, mono
       .catch(() => {
         // Error is in Redux; the InlineField will render the inline error.
       });
+  }
+
+  // Phase 7 — Accept the new model value for a conflicted field.
+  // This dispatches the acceptNewModelValue thunk, which POSTs to
+  // /fields/:field/accept-model. The backend clears the override, so
+  // the effective value falls back to the new modelExtraction value
+  // (which was updated by the most recent re-extraction). Priority is
+  // recalculated server-side.
+  function handleAcceptModel() {
+    dispatch(acceptNewModelValue({ id: enquiry.id, field }))
+      .unwrap()
+      .then(() => {
+        // The slice removes this field from reExtractConflicts on fulfilled.
+        // No local state to reset.
+      })
+      .catch(() => {
+        // Error is in Redux; the InlineField will render the inline error.
+      });
+  }
+
+  // Phase 7 — Keep the confirmed (human) value for a conflicted field.
+  // This is a CLIENT-SIDE ONLY action — no API call is needed because the
+  // override is already preserved server-side. We just remove the field
+  // from the local reExtractConflicts array so the CONFLICT UI disappears.
+  // The override remains authoritative; the new model value is still
+  // available in the extraction history (ExtractionVersion rows) for
+  // future reference.
+  function handleKeepConfirmed() {
+    dispatch(acknowledgeConflict(field));
   }
 
   function handleKeyDown(e) {
@@ -276,11 +341,72 @@ export default function InlineField({ enquiry, field, label, block = false, mono
           </p>
         )}
 
-        {/* MODEL comparison — only shown when an override is active and not editing */}
-        {overridden && !editing && (
+        {/* MODEL comparison — only shown when an override is active and not editing.
+            When a Phase 7 conflict is active, we suppress this line because the
+            conflict UI below shows the NEW MODEL value (which is more relevant
+            than the modelExtraction value, since modelExtraction was just updated
+            to the new model output by the re-extraction). */}
+        {overridden && !editing && !hasActiveConflict && (
           <p className="mt-1 font-mono text-micro text-ink-muted">
             MODEL: {formatFieldValue(modelValue, field)}
           </p>
+        )}
+
+        {/* Phase 7 — CONFLICT UI.
+            Shown when this field has an active conflict (the new model value
+            differs from the active human override). The operator must
+            explicitly decide: keep the confirmed value or accept the new
+            model value. The system NEVER auto-accepts. */}
+        {hasActiveConflict && !editing && (
+          <div className="mt-2 border border-warning/60 bg-warning-soft/40 p-2 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-micro tracking-widest text-warning border border-warning/40 bg-surface px-1.5 py-0.5">
+                CONFLICT
+              </span>
+              <span className="font-mono text-micro text-ink-muted">
+                New model value differs from the confirmed override.
+              </span>
+            </div>
+            <div className="flex items-baseline gap-3 pl-2">
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-micro tracking-widest text-accent">CONFIRMED</p>
+                <p className="text-body text-ink break-words">
+                  {formatFieldValue(effectiveValue, field)}
+                </p>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-micro tracking-widest text-ink-muted">NEW MODEL</p>
+                <p className="text-body text-ink-muted break-words">
+                  {formatFieldValue(newModelValue, field)}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 pl-2 pt-1">
+              <button
+                type="button"
+                onClick={handleKeepConfirmed}
+                disabled={isThisAccepting}
+                className="font-mono text-micro text-ink border border-line bg-surface-strong px-2 py-0.5 hover:bg-surface disabled:opacity-40 disabled:cursor-default"
+                aria-label={`keep confirmed value for ${label.toLowerCase()}`}
+              >
+                [Keep confirmed]
+              </button>
+              <button
+                type="button"
+                onClick={handleAcceptModel}
+                disabled={isThisAccepting}
+                className="font-mono text-micro text-accent border border-accent/40 bg-accent-soft px-2 py-0.5 hover:bg-accent hover:text-surface-strong disabled:opacity-40 disabled:cursor-default"
+                aria-label={`accept new model value for ${label.toLowerCase()}`}
+              >
+                {isThisAccepting ? 'ACCEPTING…' : '[Accept new model]'}
+              </button>
+            </div>
+            {isThisAcceptFailed && acceptModelError && (
+              <p className="pl-2 font-mono text-micro text-danger">
+                {acceptModelError.code || 'ERROR'}: {acceptModelError.message}
+              </p>
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -279,3 +279,109 @@ export function formatFieldValue(value, field) {
   if (typeof value === 'number') return String(value);
   return String(value);
 }
+
+// --- Phase 7 — re-extraction conflict helpers ---------------------------------
+
+/**
+ * Phase 7 — detect conflicts between active human overrides and a new model
+ * extraction.
+ *
+ * Mirrors the backend `conflictService.detectConflicts` logic so the
+ * frontend can render the conflict UI consistently. The backend remains
+ * the source of truth (it returns the conflicts array in the re-extract
+ * response), but the frontend can recompute conflicts locally when needed
+ * (e.g. after an accept-model action, to verify the conflict is gone).
+ *
+ * A conflict exists for a field when ALL three conditions hold:
+ *   1. humanOverrides[field] is active (non-null — false, 0, '' count).
+ *   2. newModelOutput[field] is present and non-null.
+ *   3. The two values differ (deep-equal for structured fields).
+ *
+ * @param {object|null|undefined} humanOverrides
+ * @param {object|null|undefined} newModelOutput  The new model extraction's
+ *   parsed output (e.g. `outcome.parsed` from the re-extract response, or
+ *   `enquiry.modelExtraction` for the latest model snapshot).
+ * @returns {Array<{field: string, humanValue: unknown, newModelValue: unknown, hasConflict: true}>}
+ */
+export function detectConflicts(humanOverrides, newModelOutput) {
+  if (!humanOverrides || typeof humanOverrides !== 'object') return [];
+  if (!newModelOutput || typeof newModelOutput !== 'object') return [];
+
+  const conflicts = [];
+  for (const field of OVERRIDEABLE_FIELDS) {
+    const humanValue = humanOverrides[field];
+    if (humanValue === null || humanValue === undefined) continue;
+    if (!(field in newModelOutput)) continue;
+    const newModelValue = newModelOutput[field];
+    if (newModelValue === null || newModelValue === undefined) continue;
+    if (valuesEqual(humanValue, newModelValue)) continue;
+    conflicts.push({ field, humanValue, newModelValue, hasConflict: true });
+  }
+  return conflicts;
+}
+
+/**
+ * Phase 7 — check whether a specific field has a conflict.
+ *
+ * Convenience wrapper around detectConflicts for single-field checks.
+ * Used by InlineField to decide whether to render the CONFLICT UI.
+ *
+ * @param {object|null|undefined} humanOverrides
+ * @param {object|null|undefined} newModelOutput
+ * @param {string} field
+ * @returns {boolean}
+ */
+export function hasConflict(humanOverrides, newModelOutput, field) {
+  return detectConflicts(humanOverrides, newModelOutput).some((c) => c.field === field);
+}
+
+/**
+ * Phase 7 — get the new model value for a specific field.
+ *
+ * Returns `undefined` when the new model output does not provide a value
+ * for the field (field absent, null, or undefined).
+ *
+ * @param {object|null|undefined} newModelOutput
+ * @param {string} field
+ * @returns {unknown|undefined}
+ */
+export function getNewModelValue(newModelOutput, field) {
+  if (!newModelOutput || typeof newModelOutput !== 'object') return undefined;
+  if (!(field in newModelOutput)) return undefined;
+  const v = newModelOutput[field];
+  if (v === null || v === undefined) return undefined;
+  return v;
+}
+
+/**
+ * Internal: compare two field values for equality.
+ * Uses JSON serialisation with sorted keys for deep equality on objects.
+ * This mirrors the backend's `util.isDeepStrictEqual` semantics closely
+ * enough for the conflict detection use case (the values are all
+ * JSON-serialisable — strings, booleans, numbers, plain objects, arrays).
+ *
+ * @param {unknown} a
+ * @param {unknown} b
+ * @returns {boolean}
+ */
+function valuesEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return a === b;
+  if (typeof a === 'object' && typeof b === 'object') {
+    return JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b));
+  }
+  return false;
+}
+
+function sortKeys(value) {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value && typeof value === 'object') {
+    const sorted = {};
+    for (const k of Object.keys(value).sort()) {
+      sorted[k] = sortKeys(value[k]);
+    }
+    return sorted;
+  }
+  return value;
+}

@@ -43,6 +43,8 @@ import {
   updateEnquiryStatus,
   updateEnquiryField,
   clearEnquiryFieldOverride,
+  reExtractEnquiry,
+  acceptNewModelValue,
 } from './enquiryThunks';
 
 const initialState = {
@@ -80,6 +82,27 @@ const initialState = {
   fieldUpdateError: null,
   fieldUpdateId: null, // enquiry id
   fieldUpdateField: null, // field name being updated
+
+  // Phase 7 — re-extraction lifecycle.
+  // Tracks the in-flight POST /re-extract request so the ExtractionPanel
+  // can show "EXTRACTION PROCESSING" and the conflict UI after success.
+  // On fulfilled, `reExtractConflicts` holds the conflicts array returned
+  // by the backend; the InlineField components read this to render the
+  // CONFLICT badge + [Keep confirmed] / [Accept new model] actions.
+  // On enquiry selection change, conflicts are cleared (they belong to
+  // the previous enquiry's re-extraction).
+  reExtractStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
+  reExtractError: null,
+  reExtractId: null, // enquiry id being re-extracted
+  reExtractConflicts: [], // conflicts array from the last re-extraction
+
+  // Phase 7 — accept-new-model lifecycle.
+  // Tracks the in-flight POST /fields/:field/accept-model request so the
+  // InlineField component can show "ACCEPTING…" and disable the buttons.
+  acceptModelStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
+  acceptModelError: null,
+  acceptModelId: null,
+  acceptModelField: null,
 
   // Phase 0 — system health
   system: {
@@ -126,12 +149,32 @@ const enquirySlice = createSlice({
       state.selected = null;
       state.selectedStatus = 'idle';
       state.selectedError = null;
+      // Phase 7 — clear re-extraction state when the selected enquiry changes.
+      // Conflicts belong to a specific enquiry's re-extraction; switching
+      // enquiries resets the conflict UI.
+      state.reExtractStatus = 'idle';
+      state.reExtractError = null;
+      state.reExtractId = null;
+      state.reExtractConflicts = [];
+      state.acceptModelStatus = 'idle';
+      state.acceptModelError = null;
+      state.acceptModelId = null;
+      state.acceptModelField = null;
     },
     resetSelected(state) {
       state.selectedId = null;
       state.selected = null;
       state.selectedStatus = 'idle';
       state.selectedError = null;
+      // Phase 7 — clear re-extraction state too.
+      state.reExtractStatus = 'idle';
+      state.reExtractError = null;
+      state.reExtractId = null;
+      state.reExtractConflicts = [];
+      state.acceptModelStatus = 'idle';
+      state.acceptModelError = null;
+      state.acceptModelId = null;
+      state.acceptModelField = null;
     },
     resetSystem(state) {
       state.system = initialState.system;
@@ -149,6 +192,37 @@ const enquirySlice = createSlice({
       state.fieldUpdateError = null;
       state.fieldUpdateId = null;
       state.fieldUpdateField = null;
+    },
+    // Phase 7 — clear the re-extraction lifecycle state. Called by the
+    // ExtractionPanel after the operator has acknowledged the conflict UI
+    // (e.g. after accepting/keeping all conflicts) or after showing error
+    // feedback.
+    clearReExtractState(state) {
+      state.reExtractStatus = 'idle';
+      state.reExtractError = null;
+      state.reExtractId = null;
+      // Note: we do NOT clear reExtractConflicts here — those persist until
+      // the operator resolves them or switches enquiries. The conflict UI
+      // remains visible so the operator can decide at their own pace.
+    },
+    // Phase 7 — clear the accept-model lifecycle state. Called by
+    // InlineField after showing success/error feedback.
+    clearAcceptModelState(state) {
+      state.acceptModelStatus = 'idle';
+      state.acceptModelError = null;
+      state.acceptModelId = null;
+      state.acceptModelField = null;
+    },
+    // Phase 7 — mark a conflict as resolved on the client side. Called
+    // when the operator clicks [Keep confirmed] (no API call needed —
+    // the override is already preserved server-side). Removes the field
+    // from the local reExtractConflicts array so the CONFLICT UI
+    // disappears for that field.
+    acknowledgeConflict(state, action) {
+      const field = action.payload;
+      state.reExtractConflicts = state.reExtractConflicts.filter(
+        (c) => c.field !== field,
+      );
     },
   },
   extraReducers: (builder) => {
@@ -312,6 +386,78 @@ const enquirySlice = createSlice({
         state.fieldUpdateId = null;
         state.fieldUpdateField = null;
       });
+
+    // --- re-extract (Phase 7) ---
+    // Tracks the in-flight POST /re-extract request. On fulfilled, stores
+    // the conflicts array returned by the backend so the InlineField
+    // components can render the CONFLICT UI.
+    builder
+      .addCase(reExtractEnquiry.pending, (state, action) => {
+        state.reExtractStatus = 'pending';
+        state.reExtractError = null;
+        state.reExtractId = action.meta.arg.id;
+        // Clear stale conflicts from a previous re-extraction.
+        state.reExtractConflicts = [];
+      })
+      .addCase(reExtractEnquiry.fulfilled, (state, action) => {
+        state.reExtractStatus = 'succeeded';
+        const { enquiry, conflicts } = action.payload;
+        // Patch the matching queue item in-place so the priority badge
+        // reflects the new score (which was recalculated server-side from
+        // the new effective extraction).
+        state.items = state.items.map((e) => (e.id === enquiry.id ? enquiry : e));
+        // Patch the selected enquiry if it matches.
+        if (state.selectedId === enquiry.id) {
+          state.selected = enquiry;
+        }
+        // Store the conflicts array for the InlineField components to read.
+        state.reExtractConflicts = conflicts || [];
+        state.reExtractId = null;
+      })
+      .addCase(reExtractEnquiry.rejected, (state, action) => {
+        state.reExtractStatus = 'failed';
+        state.reExtractError = action.payload ?? { message: 'Unknown error' };
+        state.reExtractId = null;
+        // On failure, the backend preserves all existing data, so we do
+        // NOT clear reExtractConflicts (they may still be relevant from a
+        // prior successful re-extraction). The UI shows the error inline.
+      });
+
+    // --- accept new model value (Phase 7) ---
+    // Tracks the in-flight POST /fields/:field/accept-model request. On
+    // fulfilled, patches the enquiry and removes the resolved conflict
+    // from the local conflicts array.
+    builder
+      .addCase(acceptNewModelValue.pending, (state, action) => {
+        state.acceptModelStatus = 'pending';
+        state.acceptModelError = null;
+        state.acceptModelId = action.meta.arg.id;
+        state.acceptModelField = action.meta.arg.field;
+      })
+      .addCase(acceptNewModelValue.fulfilled, (state, action) => {
+        state.acceptModelStatus = 'succeeded';
+        const { enquiry } = action.payload;
+        state.items = state.items.map((e) => (e.id === enquiry.id ? enquiry : e));
+        if (state.selectedId === enquiry.id) {
+          state.selected = enquiry;
+        }
+        // Remove the resolved conflict from the local conflicts array.
+        // The override was cleared server-side, so the conflict no longer
+        // exists. The backend response includes the updated enquiry, but
+        // we still need to update the local conflicts array because the
+        // conflicts are stored separately from the enquiry state.
+        state.reExtractConflicts = state.reExtractConflicts.filter(
+          (c) => c.field !== action.meta.arg.field,
+        );
+        state.acceptModelId = null;
+        state.acceptModelField = null;
+      })
+      .addCase(acceptNewModelValue.rejected, (state, action) => {
+        state.acceptModelStatus = 'failed';
+        state.acceptModelError = action.payload ?? { message: 'Unknown error' };
+        state.acceptModelId = null;
+        state.acceptModelField = null;
+      });
   },
 });
 
@@ -329,6 +475,9 @@ export const {
   setSortDir,
   clearStatusUpdateState,
   clearFieldUpdateState,
+  clearReExtractState,
+  clearAcceptModelState,
+  acknowledgeConflict,
 } = enquirySlice.actions;
 
 export default enquirySlice.reducer;

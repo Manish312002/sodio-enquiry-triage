@@ -9,8 +9,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test --test-reporter=spec tests/*.test.js",
-    "test:unit": "node --test --test-reporter=spec tests/extractionSchema.test.js tests/extractionPrompt.test.js tests/groqProvider.test.js tests/geminiProvider.test.js tests/llmService.test.js tests/promptInjection.test.js tests/unicode.test.js tests/scoringService.test.js tests/effectiveValueService.test.js",
-    "test:integration": "node --test --test-reporter=spec tests/extractionService.test.js tests/enquiryService.test.js tests/humanOverrideService.test.js",
+    "test:unit": "node --test --test-reporter=spec tests/extractionSchema.test.js tests/extractionPrompt.test.js tests/groqProvider.test.js tests/geminiProvider.test.js tests/llmService.test.js tests/promptInjection.test.js tests/unicode.test.js tests/scoringService.test.js tests/effectiveValueService.test.js tests/conflictService.test.js",
+    "test:integration": "node --test --test-reporter=spec tests/extractionService.test.js tests/enquiryService.test.js tests/humanOverrideService.test.js tests/reExtractService.test.js",
     "health": "node -e \"fetch('http://localhost:3001/api/health').then(r=>r.json()).then(j=>console.log(JSON.stringify(j,null,2))).catch(e=>{console.error(e);process.exit(1)})\""
   },
   "engines": {

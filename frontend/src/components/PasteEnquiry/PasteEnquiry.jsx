@@ -19,7 +19,7 @@
  */
 import { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { createEnquiry } from '../../features/enquiries/enquiryThunks';
+import { createEnquiry, reExtractEnquiry } from '../../features/enquiries/enquiryThunks';
 import { clearCreateState } from '../../features/enquiries/enquirySlice';
 
 const MAX_CHARS = 100_000; // mirror backend enquiryService.MAX_ORIGINAL_TEXT_CHARS
@@ -66,7 +66,26 @@ export default function PasteEnquiry() {
         originalText: text, // verbatim — no trim, no normalise
         sender,
       }),
-    );
+    )
+      .unwrap()
+      .then((enquiry) => {
+        // Auto-trigger LLM extraction via the existing Phase 7 re-extract
+        // flow. This reuses runExtraction → llmService → Groq → Gemini
+        // fallback and persists an ExtractionVersion. No duplicate
+        // extraction logic is introduced here; we just dispatch the
+        // existing thunk with the newly created enquiry id.
+        //
+        // The slice's createEnquiry.fulfilled case has already selected
+        // the enquiry, so the ExtractionPanel will render the
+        // "EXTRACTION PROCESSING" state while reExtractEnquiry is pending,
+        // then transition to completed/failed when it resolves.
+        dispatch(reExtractEnquiry({ id: enquiry.id }));
+      })
+      .catch(() => {
+        // createEnquiry rejection is already captured in slice state
+        // (createError / createStatus='failed'). The inline error panel
+        // renders it. Nothing to do here.
+      });
   }
 
   function handleReset() {

@@ -202,6 +202,76 @@ export const clearEnquiryFieldOverride = createAsyncThunk(
 );
 
 /**
+ * Phase 7 — re-extract an enquiry safely.
+ *
+ * Architechure.md §4 Flow D: triggers a new LLM extraction (Groq → Gemini
+ * fallback) and persists it as a NEW ExtractionVersion (append-only). The
+ * existing human overrides are PRESERVED — the new model extraction is
+ * stored in `modelExtraction` and merged with the existing overrides in
+ * `effectiveExtraction` (overrides win).
+ *
+ * The response includes a `conflicts` array listing fields where the new
+ * model value differs from an active human override. The UI surfaces these
+ * so the operator can explicitly decide per field:
+ *   - Keep the confirmed (human) value  → no API call (override stays)
+ *   - Accept the new model value         → dispatch(acceptNewModelValue)
+ *
+ * Failure behaviour: if both Groq and Gemini fail, the existing
+ * modelExtraction, effectiveExtraction, humanOverrides, and priority are
+ * ALL preserved unchanged. Only extractionState transitions to 'failed'.
+ *
+ * The thunk returns the FULL response shape (not just the enquiry) so the
+ * slice can store the conflicts array and the outcome metadata.
+ *
+ * @param {{ id: string }} payload
+ * @returns {Promise<{ enquiry: object, versions: object[], outcome: object, conflicts: Array }>}
+ */
+export const reExtractEnquiry = createAsyncThunk(
+  'enquiries/reExtractEnquiry',
+  async (payload, { rejectWithValue }) => {
+    try {
+      const { data } = await apiClient.post(`/enquiries/${payload.id}/re-extract`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(normalizeError(err));
+    }
+  },
+);
+
+/**
+ * Phase 7 — accept the new model value for a conflicted field.
+ *
+ * After a re-extraction produces a model value that conflicts with an
+ * active human override, the operator can explicitly accept the new model
+ * value. This endpoint clears the override for that field, so the
+ * effective value falls back to the new modelExtraction value (which was
+ * updated by the most recent re-extraction). Priority is recalculated.
+ *
+ * IMPORTANT: This action is EXPLICIT. The system NEVER automatically
+ * accepts a new model value merely because re-extraction succeeded.
+ *
+ * The "Keep confirmed" action does NOT require an API call — the override
+ * is already preserved server-side. The frontend just clears the local
+ * "conflict acknowledged" UI state.
+ *
+ * @param {{ id: string, field: string }} payload
+ * @returns {Promise<object>}  The updated enquiry response shape.
+ */
+export const acceptNewModelValue = createAsyncThunk(
+  'enquiries/acceptNewModelValue',
+  async (payload, { rejectWithValue }) => {
+    try {
+      const { data } = await apiClient.post(
+        `/enquiries/${payload.id}/fields/${payload.field}/accept-model`,
+      );
+      return data;
+    } catch (err) {
+      return rejectWithValue(normalizeError(err));
+    }
+  },
+);
+
+/**
  * Health connectivity thunk (Phase 0). Kept here so App.jsx has a single
  * import surface for system + enquiry thunks.
  */
