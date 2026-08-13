@@ -55,13 +55,13 @@ Do not switch the stack without an explicit decision.
 
 ## Current Status
 
-**Current phase:** Phase 1 — Database + Enquiry Ingestion (NOT YET STARTED; awaiting user approval)
+**Current phase:** Phase 2 — File Parser (NOT YET STARTED; awaiting user approval)
 
-**Last completed phase:** Phase 0 — Project Foundation (verified end-to-end, see "Phase 0 — Completed" section below)
+**Last completed phase:** Phase 1 — Database + Enquiry Ingestion (verified end-to-end, see "Phase 1 — Completed" section below)
 
-**Current file being worked on:** none (Phase 0 commit `53c5899` made; waiting for Phase 1 approval)
+**Current file being worked on:** none (Phase 1 commit pending; waiting for Phase 2 approval)
 
-**Next file to work on:** Phase 1 deliverables per `Phases.md` — `Enquiry` Mongoose model, `POST /api/enquiries`, paste-single-enquiry UI. Do not start until the operator explicitly approves Phase 1.
+**Next file to work on:** Phase 2 deliverables per `Phases.md` — multipart file upload, separator-delimited enquiry parser, one record per block. Do not start until the operator explicitly approves Phase 2.
 
 ## Completed Documentation
 
@@ -74,10 +74,10 @@ Do not switch the stack without an explicit decision.
 
 ## Not Yet Completed
 
-- [x] React frontend (Phase 0 skeleton)
-- [x] Express backend (Phase 0 skeleton)
-- [ ] MongoDB schema/migrations (Phase 1+)
-- [ ] Single enquiry ingestion (Phase 1)
+- [x] React frontend (Phase 0 skeleton; Phase 1 paste UI added)
+- [x] Express backend (Phase 0 skeleton; Phase 1 enquiry endpoints added)
+- [x] MongoDB schema/migrations (Phase 1 — `Enquiry` model)
+- [x] Single enquiry ingestion (Phase 1)
 - [ ] Sample file parser (Phase 2)
 - [ ] LLM extraction adapter (Phase 3; Phase 0 skeletons in place)
 - [ ] Extraction validation (Phase 3)
@@ -181,14 +181,16 @@ When adding a feature:
 
 ## Current Next Action
 
-Phase 0 is complete and verified. Do NOT start Phase 1 until the operator
-explicitly approves it. When approval is given, Phase 1 deliverables are
+Phase 1 is complete and verified. Do NOT start Phase 2 until the operator
+explicitly approves it. When approval is given, Phase 2 deliverables are
 (per `Phases.md`):
 
-- `Enquiry` Mongoose model with immutable `originalText`, `source`, `receivedAt`;
-- `POST /api/enquiries` endpoint with validation;
-- paste-single-enquiry UI surface;
-- ensure the saved record can be retrieved on UI refresh.
+- multipart file upload (`POST /api/enquiries/import`);
+- parser for separator-delimited enquiries (source-format-aware, no
+  reformatting of the supplied sample data);
+- one enquiry record per parsed block;
+- malformed-block handling (blank/short messages do not crash the import);
+- preserve each original message text verbatim.
 
 ## Source Boundary
 
@@ -295,4 +297,175 @@ These are documentation-level corrections; they do not add new product requireme
 ### Files created in this phase
 
 42 files committed. See `git show --stat 53c5899` for the full list.
+
+---
+
+## Phase 1 — Completed
+
+**Commit:** see `git log` for the Phase 1 commit hash.
+**Date:** 2026-08-13
+**Status:** All Phase 1 acceptance criteria (`Phases.md` lines 49-53) verified end-to-end.
+
+### What was built
+
+**Backend — `Enquiry` model (`backend/src/models/Enquiry.js`):**
+- Full Mongoose schema per Architechure.md §6 (`source`, `originalText`, `sender`,
+  `receivedAt`, `status`, `isGenuineProjectEnquiry`, `effectiveExtraction`,
+  `humanOverrides`, `priority`, `extractionState`, `batchId`, `timestamps`).
+- `originalText` and `receivedAt` marked `immutable: true` (Rules.md §14 —
+  original enquiry text is immutable, source timestamp is preserved).
+- Sub-schemas for `budget`, `timeline`, `effectiveExtraction`, `humanOverrides`,
+  `priority` declared now so later phases don't require migrations.
+- `strict: 'throw'` so unknown fields are rejected loudly (defence in depth).
+- Compound indexes on `{ receivedAt: -1 }` and `{ status, receivedAt }` for
+  the future console (Phase 5).
+- Instance method `toApiResponse()` returns a stable, Mongoose-internal-free
+  shape for JSON responses.
+
+**Backend — enquiry service (`backend/src/services/enquiryService.js`):**
+- `createEnquiry({ source, originalText, sender? })` — Phase 1 hard limit
+  `MAX_ORIGINAL_TEXT_CHARS = 100_000`. Empty/whitespace-only text rejected
+  with `EMPTY_ORIGINAL_TEXT`. Sender email shape checked server-side.
+  Original text is **never trimmed or normalised**.
+- `getEnquiryById(id)` — 24-hex ObjectId format validated; throws `INVALID_ID`
+  on bad format, returns null on not-found (controller maps to 404).
+- `listEnquiries({ limit=50 })` — basic Phase 1 list (Phase 5 adds filters).
+
+**Backend — controller + routes:**
+- `backend/src/controllers/enquiryController.js`:
+  - `POST /api/enquiries` — zod strict schema (`source: 'paste'`,
+    `originalText: string 1..100k`, optional `sender{name,email}`).
+    Returns 201 with `{ enquiry: <response shape> }`.
+  - `GET /api/enquiries/:id` — returns 200 / 400 (invalid id) / 404 (not found).
+  - `GET /api/enquiries` — returns `{ enquiries, count }` (Phase 5 will add
+    filters + sorting).
+- `backend/src/routes/enquiryRoutes.js` — three routes mounted at `/api/enquiries`.
+- `backend/src/app.js` — wired `enquiryRoutes`; raised JSON body limit to 5mb
+  to accommodate `MAX_ORIGINAL_TEXT_CHARS` with headroom.
+
+**Frontend — Redux (`frontend/src/features/enquiries/`):**
+- `enquiryThunks.js` — three `createAsyncThunk`s:
+  - `createEnquiry({ originalText, sender? })` → `POST /api/enquiries`
+  - `fetchEnquiry(id)` → `GET /api/enquiries/:id`
+  - `fetchEnquiries({ limit? })` → `GET /api/enquiries`
+  - `fetchHealth` kept from Phase 0.
+  - All thunks normalise axios errors into `{ message, code, status }` so the
+    UI never renders a raw Error object.
+- `enquirySlice.js` — extended Phase 0 slice with:
+  - `items[]`, `listStatus`, `listError` for the queue
+  - `selectedId`, `selected`, `selectedStatus`, `selectedError` for detail
+  - `createStatus`, `createError`, `lastCreatedId` for paste lifecycle
+  - `createEnquiry.fulfilled` prepends the new enquiry to `items` AND
+    auto-selects it, so the detail view updates without an extra round-trip
+  - `clearCreateState`, `setSelectedId`, `resetSelected` reducer actions
+    (slice-level, not thunks — fixed an import bug found during build)
+
+**Frontend — UI components:**
+- `components/PasteEnquiry/PasteEnquiry.jsx` — compact "feed intake" strip
+  (design.md §11), NOT a giant drag-and-drop box. Textarea with char counter,
+  optional sender name/email, inline error display (no toast), `SUBMIT
+  ENQUIRY` + `CLEAR` actions. Disables submit while pending or when text is
+  empty/whitespace-only. Mirrors backend validation client-side first.
+- `components/OriginalMessage/OriginalMessage.jsx` — paper-like SOURCE panel
+  (design.md §7) that renders `originalText` verbatim inside `<pre>` with
+  monospace font. Whitespace, special chars, prompt-injection text all
+  preserved as literal text (no `dangerouslySetInnerHTML`).
+- `components/EnquiryDetail/EnquiryDetail.jsx` — split evidence layout
+  (SOURCE | EXTRACTED). Right panel shows "EXTRACTION PENDING" placeholder
+  since LLM extraction is Phase 3. Shows metadata (id, receivedAt, status,
+  extractionState, timestamps).
+- `components/EnquiryQueue/EnquiryQueue.jsx` — Phase 1 minimal list. Loads
+  recent enquiries on mount via `fetchEnquiries`, renders compact rows with
+  received time / source / status / preview. Clicking a row selects it.
+- `App.jsx` — three-zone Signal Desk layout (header / paste+queue | detail).
+  On mount: fetches health, fetches queue, and if `localStorage` has
+  `sodio:lastCreatedId` AND no current selection, re-fetches that enquiry
+  (this is the "retrieve the saved record after page refresh" acceptance
+  criterion). Persists `lastCreatedId` to `localStorage` whenever it changes.
+
+### Verification results (all green)
+
+Test script: `/home/z/my-project/scripts/phase1-test.sh` (13 tests)
+Follow-up:  `/home/z/my-project/scripts/phase1-test-followup.sh` (3 tests)
+
+| # | Test | Result |
+|---|---|---|
+| 1 | `POST /api/enquiries` with valid paste + sender | 201 + full enquiry object; `status:"new"`, `extractionState:"pending"`, all extraction/override/priority sub-fields correctly defaulted |
+| 2 | `GET /api/enquiries/:id` (retrieve after refresh) | 200 with identical object — same id, same `originalText`, same `receivedAt` |
+| 3 | `originalText` byte-for-byte identical | IDENTICAL — newlines, `£` (pound), `—` (em-dash), and "Ignore all previous instructions" prompt-injection text all preserved |
+| 4 | `POST` empty `originalText` | 400 `VALIDATION_ERROR` "originalText: String must contain at least 1 character(s)" |
+| 5 | `POST` whitespace-only text | 400 `EMPTY_ORIGINAL_TEXT` "originalText cannot be empty." |
+| 6 | `POST` wrong `source` | 400 `VALIDATION_ERROR` "source: Invalid literal value, expected \"paste\"" |
+| 7 | `POST` invalid sender email | 400 `INVALID_SENDER_EMAIL` "sender.email does not look like an email address." |
+| 8 | `POST` unknown extra field (`priority`) | 400 `VALIDATION_ERROR` "body: Unrecognized key(s) in object: 'priority'" — note: client cannot inject priority (Rules.md §3) |
+| 9 | `GET` valid-format but nonexistent id | 404 `NOT_FOUND` "Enquiry <id> not found." |
+| 10 | `GET` invalid id format (non-hex / too short) | 400 `INVALID_ID` "Invalid enquiry id." |
+| 11 | `GET /api/enquiries` list | 200 with `{ enquiries, count }`; created enquiry appears in list |
+| 12 | Special characters preservation (tabs, emoji 🚀, café, naïve, 中文, £ € ₹) | IDENTICAL — all preserved through full MongoDB round-trip |
+| 13 | Frontend build artefacts exist | `dist/index.html`, `dist/assets/index-*.css` (10.84KB), `dist/assets/index-*.js` (234.10KB) — Tailwind + React + Redux all compile cleanly |
+
+**Frontend production build:** `npm run build` succeeds, 103 modules transformed,
+8.22→10.84KB CSS (Tailwind tokens compiled), 223→234KB JS.
+
+### Commands executed (in order)
+
+1. `mkdir -p backend/src/{models,services}` — create dirs for new backend files
+2. Write `backend/src/models/Enquiry.js`
+3. Write `backend/src/services/enquiryService.js`
+4. Write `backend/src/controllers/enquiryController.js`
+5. Write `backend/src/routes/enquiryRoutes.js`
+6. Edit `backend/src/app.js` to mount `/api/enquiries` + raise body limit to 5mb
+7. `node --check` on each new backend file — all OK
+8. Edit `frontend/src/features/enquiries/enquiryThunks.js` — add `createEnquiry`, `fetchEnquiry`, `fetchEnquiries`
+9. Edit `frontend/src/features/enquiries/enquirySlice.js` — extend state + extraReducers
+10. `mkdir -p` for `components/{PasteEnquiry,EnquiryDetail,OriginalMessage,EnquiryQueue}`
+11. Write `PasteEnquiry.jsx`, `OriginalMessage.jsx`, `EnquiryDetail.jsx`, `EnquiryQueue.jsx`
+12. Edit `frontend/src/App.jsx` — three-zone layout + refresh-retrieval via localStorage
+13. `npm run build` (frontend) — failed: `"clearCreateState" is not exported by enquiryThunks.js`
+14. **Bug fix:** `clearCreateState` and `setSelectedId` are slice actions, not thunks. Fixed imports in `PasteEnquiry.jsx` and `EnquiryQueue.jsx`.
+15. `npm run build` — succeeded (103 modules, 234KB JS, 10.84KB CSS)
+16. Mongod had to be re-downloaded (sandbox reset wiped `/home/z/mongodb/`). Re-extracted tarball, restarted mongod.
+17. Write `/home/z/my-project/scripts/phase1-test.sh` — single-bash-invocation test runner
+18. `bash /home/z/my-project/scripts/phase1-test.sh` — all 13 tests pass
+19. Write + run `/home/z/my-project/scripts/phase1-test-followup.sh` — verifies 404 path for valid-format-but-nonexistent id
+
+### Decisions made during Phase 1
+
+1. **`originalText` immutability enforced at two layers.** Mongoose schema marks the field `immutable: true`, AND the service layer never exposes a setter. Defence in depth — even if a future controller tries to update originalText, Mongoose throws.
+2. **`strict: 'throw'` on the Enquiry schema.** Unknown fields raise a MongooseError rather than being silently dropped. This caught test 8 (client tried to inject `priority` — correctly rejected, since Rules.md §3 forbids client-controlled priority).
+3. **`receivedAt` is also `immutable`.** Rules.md §14 explicitly says "source timestamp is preserved." Marked at the schema level so even an admin script cannot rewrite history.
+4. **Sender is optional for paste.** PRD.md FR-01 says "paste one enquiry" — the operator may not always know the sender. The UI marks sender name/email as optional. The schema accepts `null`.
+5. **`humanOverrides` stored as `Mixed` type.** This lets Phase 6/7 distinguish "field X has never been edited" (key absent) from "field X was edited then cleared" (key present, value null). The effective-value resolver will use key presence, not truthiness.
+6. **Refresh retrieval via `localStorage`.** The Phase 1 acceptance criterion "UI refresh can retrieve the saved record" is satisfied by storing `lastCreatedId` in `localStorage` under `sodio:lastCreatedId` and re-fetching via `GET /api/enquiries/:id` on mount if no selection exists. This is a deliberate, minimal choice — no URL routing yet (Phase 5 will add `?selected=<id>` query param).
+7. **Frontend error display is inline, not toast.** design.md §16: "Errors should appear close to the failed action." `PasteEnquiry` shows the server's `error.message` directly below the textarea. `EnquiryQueue` shows list errors in a red panel above the list.
+8. **No TypeScript introduced.** All new files are `.js` / `.jsx`. Verified via `find` — zero `.ts`/`.tsx`/`tsconfig.json` matches.
+9. **No LLM calls, no scoring, no parser.** Phase 1 scope strictly honoured. `extractionState` defaults to `"pending"`; Phase 3 will pick these records up.
+
+### Known limitations / blockers
+
+- **No sample-enquiries file in the uploaded zip.** Phase 2 (parser) will need either the official `sample-enquiries.txt` from the evaluator or a reconstructed fixture built from the 20 cases enumerated in the "Important Source Cases" section of this file. **Will need to ask the operator before starting Phase 2.**
+- **Sandbox resets wipe `/home/z/mongodb/`.** mongod must be re-downloaded on each session restart. Not a project issue — environmental. The `phase1-test.sh` script auto-restarts mongod if it's not running.
+- **No URL-based selection.** Refresh retrieval uses `localStorage`, not URL query params. If the operator wants to share a permalink to a specific enquiry, that's Phase 5+.
+
+### Files created / changed in this phase
+
+**Created (8):**
+- `backend/src/models/Enquiry.js`
+- `backend/src/services/enquiryService.js`
+- `backend/src/controllers/enquiryController.js`
+- `backend/src/routes/enquiryRoutes.js`
+- `frontend/src/components/PasteEnquiry/PasteEnquiry.jsx`
+- `frontend/src/components/OriginalMessage/OriginalMessage.jsx`
+- `frontend/src/components/EnquiryDetail/EnquiryDetail.jsx`
+- `frontend/src/components/EnquiryQueue/EnquiryQueue.jsx`
+
+**Changed (4):**
+- `backend/src/app.js` (mount `/api/enquiries`, raise body limit)
+- `frontend/src/features/enquiries/enquiryThunks.js` (added 3 thunks)
+- `frontend/src/features/enquiries/enquirySlice.js` (extended state + reducers)
+- `frontend/src/App.jsx` (three-zone layout + refresh retrieval)
+
+**Test scripts (2):**
+- `/home/z/my-project/scripts/phase1-test.sh`
+- `/home/z/my-project/scripts/phase1-test-followup.sh`
 
