@@ -1,5 +1,5 @@
 /**
- * EnquiryQueue — Phase 5.
+ * EnquiryQueue — Phase 5 (Phase 10 keyboard-nav polish).
  *
  * design.md §6 "Enquiry Row": compact operational record, not a card.
  * Each row shows:
@@ -21,12 +21,16 @@
  *   - extraction pending / failed (rendered inline in the row, not hidden)
  *
  * The queue is rendered as a <ul> of <li> buttons for keyboard navigation
- * (design.md §16). The currently-selected enquiry gets an accent left rail.
+ * (design.md §16). Phase 10 adds roving tabindex + ArrowUp/ArrowDown/Home/End
+ * navigation so the operator can move through the queue without leaving the
+ * keyboard. The currently-selected enquiry gets an accent left rail AND is the
+ * single tab-stop for the list.
  *
  * Data source: Redux `enquiries.items`, populated by App.jsx's filter-driven
  * fetchEnquiries effect. This component does NOT dispatch fetchEnquiries
  * directly — App.jsx is the single source of truth for when to refetch.
  */
+import { useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { setSelectedId } from '../../features/enquiries/enquirySlice';
 import SortBar from '../SortBar/SortBar';
@@ -37,6 +41,7 @@ import {
   priorityRailClass,
   hasActiveFilter,
   extractionStateLabel,
+  nextQueueIndex,
 } from '../../features/enquiries/format';
 
 export default function EnquiryQueue() {
@@ -47,16 +52,25 @@ export default function EnquiryQueue() {
   const selectedId = useSelector((s) => s.enquiries.selectedId);
   const filters = useSelector((s) => s.enquiries.filters);
   const activeFilter = hasActiveFilter(filters);
+  const listRef = useRef(null);
 
   // Loading — render skeleton rows so the queue structure is preserved.
+  // design.md §14: "Use skeleton rows that preserve the table structure.
+  // Avoid full-screen loading spinners."
   if (listStatus === 'pending' && items.length === 0) {
     return (
       <QueueShell count="…">
-        <ul className="divide-y divide-line">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <ul className="divide-y divide-line" aria-busy="true" aria-label="loading enquiries">
+          {Array.from({ length: 5 }).map((_, i) => (
             <li key={i} className="px-4 py-3">
-              <div className="h-3 w-1/2 bg-line animate-pulse" />
-              <div className="mt-2 h-2.5 w-3/4 bg-line/60 animate-pulse" />
+              <div className="flex items-center gap-3">
+                <div className="w-1 h-8 bg-line animate-pulse shrink-0" aria-hidden />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-2.5 w-1/4 bg-line animate-pulse" />
+                  <div className="h-2 w-2/3 bg-line/60 animate-pulse" />
+                  <div className="h-2 w-1/2 bg-line/40 animate-pulse" />
+                </div>
+              </div>
             </li>
           ))}
         </ul>
@@ -82,13 +96,15 @@ export default function EnquiryQueue() {
   }
 
   // Empty queue — differentiate "no enquiries at all" from "no matches".
+  // design.md §13: "Do not use generic illustrations."
   if (items.length === 0) {
     return (
       <QueueShell count={0}>
-        <div className="p-8 text-center">
+        <div className="p-10 text-center">
           {activeFilter ? (
             <>
-              <p className="text-section text-ink-muted">NO MATCHES</p>
+              <p className="font-mono text-micro text-ink-muted/60 tracking-widest">QUEUE</p>
+              <p className="mt-2 text-section text-ink-muted">NO MATCHES</p>
               <p className="mt-2 text-body text-ink-muted">
                 The current filter combination returned nothing.
                 <br />
@@ -97,7 +113,8 @@ export default function EnquiryQueue() {
             </>
           ) : (
             <>
-              <p className="text-section text-ink-muted">NO SIGNAL YET</p>
+              <p className="font-mono text-micro text-ink-muted/60 tracking-widest">QUEUE</p>
+              <p className="mt-2 text-section text-ink-muted">NO SIGNAL YET</p>
               <p className="mt-2 text-body text-ink-muted">
                 Paste an enquiry above or import a source file.
                 <br />
@@ -110,9 +127,46 @@ export default function EnquiryQueue() {
     );
   }
 
+  // Phase 10 — keyboard navigation handler.
+  // design.md §16: "Keyboard navigation should be possible through table rows
+  // and editable fields."
+  //
+  // Roving tabindex: only the focused row has tabIndex=0, all others have
+  // tabIndex=-1. The focused row tracks the selected enquiry (so screen
+  // readers + keyboard users land on the same row). When no row is selected,
+  // the first row is the tab-stop.
+  //
+  // The pure index math lives in `nextQueueIndex` (format.js) so it can be
+  // unit-tested without a DOM library.
+  function handleKeyDown(e) {
+    if (items.length === 0) return;
+    const currentIndex = selectedId
+      ? items.findIndex((it) => it.id === selectedId)
+      : -1;
+    const nextIdx = nextQueueIndex(items.length, currentIndex, e.key);
+    if (nextIdx == null || nextIdx === currentIndex) return;
+    e.preventDefault();
+    const nextItem = items[nextIdx];
+    if (!nextItem) return;
+    dispatch(setSelectedId(nextItem.id));
+    // Move DOM focus to the newly-selected row so screen readers announce
+    // it and the next arrow press starts from the right place.
+    const rowEl = listRef.current?.querySelector?.(
+      `[data-row-id="${nextItem.id}"]`,
+    );
+    if (rowEl && typeof rowEl.focus === 'function') rowEl.focus();
+  }
+
   return (
     <QueueShell count={items.length}>
-      <ul className="divide-y divide-line">
+      <ul
+        ref={listRef}
+        className="divide-y divide-line"
+        onKeyDown={handleKeyDown}
+        aria-label="enquiry queue"
+        role="listbox"
+        aria-activedescendant={selectedId ? `row-${selectedId}` : undefined}
+      >
         {items.map((e) => (
           <QueueRow
             key={e.id}
@@ -171,14 +225,21 @@ function QueueRow({ enquiry, isSelected, onSelect }) {
   const stateLabel = extractionStateLabel(enquiry.extractionState);
 
   return (
-    <li>
+    <li id={`row-${enquiry.id}`} role="option" aria-selected={isSelected}>
       <button
         type="button"
         onClick={onSelect}
-        className={`w-full text-left flex items-stretch ${
+        data-row-id={enquiry.id}
+        // Roving tabindex: selected row (or first row when none selected)
+        // is the single tab-stop. All other rows are -1.
+        tabIndex={isSelected ? 0 : -1}
+        className={`w-full text-left flex items-stretch transition-colors duration-150 ${
           isSelected ? 'bg-paper' : 'hover:bg-paper'
-        } transition-colors`}
+        }`}
         aria-pressed={isSelected}
+        aria-label={`${contactName || 'unknown contact'}${
+          company ? `, ${company}` : ''
+        }, priority ${priorityLevel || 'none'}, status ${enquiry.status}`}
       >
         {/* Priority rail */}
         <span className={`w-1 shrink-0 ${railColor}`} aria-hidden />

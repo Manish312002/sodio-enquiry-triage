@@ -33,7 +33,7 @@ import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { SYSTEM_PROMPT, buildUserMessage } from './extractionPrompt.js';
 import { extractionSchema } from './extractionSchema.js';
-import { SERVICE_LINES, BUDGET_QUALIFIERS } from '../../utils/constants.js';
+import { EXTRACTION_JSON_SCHEMA } from './extractionJsonSchema.js';
 
 export const PROVIDER_NAME = 'gemini';
 
@@ -51,6 +51,13 @@ export function isConfigured() {
  *   - tests can mutate `env.GEMINI_API_KEY` between tests
  *   - the client picks up the latest env config at call time
  *
+ * Phase 9 — the @google/genai SDK does not expose a per-request timeout
+ * parameter on `interactions.create()` (unlike the OpenAI SDK's `timeout`
+ * client option). We enforce a timeout EXTERNALLY via `withTimeout()` which
+ * races the SDK promise against an AbortController-driven timeout. This
+ * guarantees that a hung Gemini request cannot block the extraction chain
+ * indefinitely (Rules.md §12 — provider timeout is a Phase 9 requirement).
+ *
  * @returns {GoogleGenAI}
  */
 function buildClient() {
@@ -58,58 +65,47 @@ function buildClient() {
 }
 
 /**
- * Build the response_format schema for `ai.interactions.create()`.
+ * Race a promise against a timeout. Resolves/rejectes with the original
+ * promise's outcome if it settles before `ms`; otherwise rejects with an
+ * AbortError-like Error so classifyError() maps it to PROVIDER_TIMEOUT.
  *
- * Uses Gemini's JSON-schema dialect (subset of OpenAPI 3.0).
- * Enums are constrained so the model cannot emit out-of-range values.
+ * The AbortController is used purely as a signal carrier — the @google/genai
+ * SDK does not currently accept an AbortSignal on `interactions.create()`,
+ * so we cannot actually abort the underlying HTTP request. The dangling
+ * promise resolves/rejects in the background and is ignored. This is the
+ * same pattern Node's built-in `Promise.race` callers use when the
+ * underlying SDK lacks first-class timeout support.
+ *
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @returns {Promise<T>}
+ */
+function withTimeout(promise, ms) {
+  let timer;
+  const timeoutErr = new Error(`Gemini request timed out after ${ms}ms.`);
+  timeoutErr.name = 'AbortError';
+  const timeoutPromise = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(timeoutErr), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Return the canonical extraction JSON Schema for Gemini's `response_format`.
+ *
+ * Gemini's `@google/genai` SDK accepts a JSON-schema-dialect object directly
+ * as `response_format` (no OpenAI-style `{ type: 'json_schema', name, schema }`
+ * wrapper). We hand it the SAME canonical schema used by Groq
+ * (`EXTRACTION_JSON_SCHEMA`), so both providers receive identical field
+ * contracts. Zod remains the authoritative post-response validator.
+ *
+ * The schema is frozen and reused across calls — no per-call allocation.
+ *
+ * @returns {{ [key: string]: unknown }}
  */
 function buildResponseFormat() {
-  return {
-    type: 'object',
-    properties: {
-      company: { type: 'string', nullable: true },
-      contactName: { type: 'string', nullable: true },
-      contactEmail: { type: 'string', nullable: true },
-      serviceLine: { type: 'string', enum: SERVICE_LINES },
-      budget: {
-        type: 'object',
-        properties: {
-          raw: { type: 'string' },
-          currency: { type: 'string', nullable: true },
-          min: { type: 'number', nullable: true },
-          max: { type: 'number', nullable: true },
-          qualifier: { type: 'string', enum: BUDGET_QUALIFIERS },
-        },
-      },
-      timeline: {
-        type: 'object',
-        properties: {
-          raw: { type: 'string' },
-          normalized: { type: 'object', nullable: true },
-        },
-      },
-      summary: { type: 'string' },
-      isGenuineProjectEnquiry: { type: 'boolean' },
-      confidence: { type: 'number', nullable: true },
-      projectCount: { type: 'integer' },
-      additionalProjectNote: { type: 'string', nullable: true },
-      isModelInstructionAttempt: { type: 'boolean' },
-    },
-    required: [
-      'company',
-      'contactName',
-      'contactEmail',
-      'serviceLine',
-      'budget',
-      'timeline',
-      'summary',
-      'isGenuineProjectEnquiry',
-      'confidence',
-      'projectCount',
-      'additionalProjectNote',
-      'isModelInstructionAttempt',
-    ],
-  };
+  return EXTRACTION_JSON_SCHEMA;
 }
 
 /**
@@ -154,8 +150,8 @@ function classifyError(err) {
       };
     }
   }
-  // AbortError — timeout (we don't currently set an explicit timeout via
-  // the SDK, but defensive classification)
+  // AbortError — timeout (Phase 9: withTimeout() in extract() rejects with
+  // an AbortError-named error when the SDK call exceeds env.LLM_TIMEOUT_MS).
   if (err?.name === 'AbortError') {
     return {
       code: 'PROVIDER_TIMEOUT',
@@ -214,17 +210,24 @@ export async function extract(enquiryText) {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const interaction = await client.interactions.create({
-        model: env.GEMINI_MODEL,
-        input: buildUserMessage(enquiryText),
-        system_instruction: SYSTEM_PROMPT,
-        // Force JSON output conforming to our schema.
-        response_format: buildResponseFormat(),
-        // Generation config: deterministic extraction
-        generation_config: {
-          temperature: 0,
-        },
-      });
+      // Phase 9 — wrap the SDK call in withTimeout() so a hung Gemini
+      // request cannot block the extraction chain indefinitely. The
+      // timeout error is shaped to look like an AbortError so the
+      // existing classifyError() path maps it to PROVIDER_TIMEOUT.
+      const interaction = await withTimeout(
+        client.interactions.create({
+          model: env.GEMINI_MODEL,
+          input: buildUserMessage(enquiryText),
+          system_instruction: SYSTEM_PROMPT,
+          // Force JSON output conforming to our schema.
+          response_format: buildResponseFormat(),
+          // Generation config: deterministic extraction
+          generation_config: {
+            temperature: 0,
+          },
+        }),
+        env.LLM_TIMEOUT_MS,
+      );
 
       const content = interaction.output_text;
       if (!content || typeof content !== 'string' || content.length === 0) {
@@ -320,7 +323,12 @@ export async function extract(enquiryText) {
   throw lastError || new Error('Gemini extraction failed.');
 }
 
-export const promptContract = { SYSTEM_PROMPT, buildUserMessage, extractionSchema };
+export const promptContract = {
+  SYSTEM_PROMPT,
+  buildUserMessage,
+  extractionSchema,
+  responseFormat: EXTRACTION_JSON_SCHEMA,
+};
 
 const geminiProvider = { name: PROVIDER_NAME, isConfigured, extract };
 export default geminiProvider;

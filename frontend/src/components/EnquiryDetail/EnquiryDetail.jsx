@@ -23,16 +23,51 @@
  * Therefore no value is ever shown as CONFIRMED in this phase — all
  * rendered extracted values are labelled MODEL. The visual distinction
  * is prepared for Phase 6 via the `MODEL` chip on each field row.
+ *
+ * BUG 2 FIX: this component now dispatches `fetchEnquiry(selectedId)`
+ * when `selectedId` is set but `selected` cannot be resolved from the
+ * queue `items` (e.g. restored from localStorage on a fresh page load,
+ * or when the queue hasn't been fetched yet). This ensures the detail
+ * panel always has a full enquiry object to render, regardless of how
+ * `selectedId` was set. Redux remains the authoritative selection state;
+ * this effect only triggers a fetch to populate `selected`, it does NOT
+ * introduce local selection state.
  */
-import { useSelector } from 'react-redux';
+import { useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import OriginalMessage from '../OriginalMessage/OriginalMessage';
 import ExtractionPanel from '../ExtractionPanel/ExtractionPanel';
 import StatusTrack from '../StatusTrack/StatusTrack';
+import { fetchEnquiry } from '../../features/enquiries/enquiryThunks';
 
 export default function EnquiryDetail() {
+  const dispatch = useDispatch();
   const selected = useSelector((s) => s.enquiries.selected);
+  const selectedId = useSelector((s) => s.enquiries.selectedId);
   const selectedStatus = useSelector((s) => s.enquiries.selectedStatus);
   const selectedError = useSelector((s) => s.enquiries.selectedError);
+  const items = useSelector((s) => s.enquiries.items);
+
+  // BUG 2 FIX: if selectedId is set but `selected` is null (because the
+  // enquiry isn't in the queue `items`), trigger a fetchEnquiry to load
+  // the full enquiry object. This handles:
+  //   - localStorage restore on page load (before fetchEnquiries resolves)
+  //   - direct navigation / deep link to a specific enquiry
+  //   - any case where selectedId points to an enquiry not in the current
+  //     filtered/sorted queue
+  //
+  // Guard against duplicate fetches: only dispatch when selectedStatus is
+  // 'idle' (not already pending/succeeded/failed) AND the enquiry is NOT
+  // in items (if it IS in items, setSelectedId already resolved it).
+  useEffect(() => {
+    if (!selectedId) return;
+    if (selectedStatus === 'pending') return; // already fetching
+    if (selected) return; // already have the enquiry
+    const inItems = items.some((e) => e.id === selectedId);
+    if (inItems) return; // setSelectedId will have resolved it
+    // selectedId is set, selected is null, not in items, not pending → fetch.
+    dispatch(fetchEnquiry(selectedId));
+  }, [dispatch, selectedId, selected, selectedStatus, items]);
 
   if (selectedStatus === 'pending') {
     return (
@@ -60,12 +95,16 @@ export default function EnquiryDetail() {
 
   if (!selected) {
     return (
-      <section className="border border-line bg-surface p-8 text-center">
-        <p className="text-section text-ink-muted">NO ENQUIRY SELECTED</p>
+      <section className="border border-line bg-surface p-10 text-center">
+        <p className="font-mono text-micro text-ink-muted/60 tracking-widest">DETAIL</p>
+        <p className="mt-2 text-section text-ink-muted">NO ENQUIRY SELECTED</p>
         <p className="mt-2 text-body text-ink-muted">
           Select one from the queue on the left.
           <br />
           The original message and extracted fields will appear here.
+        </p>
+        <p className="mt-4 font-mono text-micro text-ink-muted/60">
+          tip: use ↑ / ↓ to move through the queue without leaving the keyboard
         </p>
       </section>
     );
@@ -101,10 +140,12 @@ function SkeletonPanel({ label }) {
       <div className="border-b border-line px-4 py-2">
         <span className="font-mono text-micro tracking-widest text-ink-muted">{label}</span>
       </div>
-      <div className="p-4 space-y-2">
+      <div className="p-4 space-y-2.5" aria-busy="true">
         <div className="h-3 w-1/3 bg-line animate-pulse" />
         <div className="h-3 w-2/3 bg-line/70 animate-pulse" />
         <div className="h-3 w-1/2 bg-line/60 animate-pulse" />
+        <div className="h-3 w-3/4 bg-line/50 animate-pulse" />
+        <div className="h-3 w-2/5 bg-line/60 animate-pulse" />
       </div>
     </section>
   );

@@ -58,6 +58,14 @@ const schema = z.object({
 
   // --- Batch processing ---
   BATCH_CONCURRENCY: z.coerce.number().int().positive().default(3),
+
+  // --- Phase 9: Security ---
+  // CORS_ALLOWED_ORIGINS — comma-separated list of allowed origins for
+  // browser requests. '*' (the default in development) allows any origin.
+  // In production, set this to the explicit origin(s) of the deployed
+  // frontend, e.g. `https://triage.example.com,https://staging.triage.example.com`.
+  // Empty string is treated as '*' (permissive).
+  CORS_ALLOWED_ORIGINS: z.string().default('*'),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -83,5 +91,6 @@ if (!parsed.success) {
  * @property {number} LLM_TIMEOUT_MS
  * @property {number} LLM_MAX_RETRIES
  * @property {number} BATCH_CONCURRENCY
+ * @property {string} CORS_ALLOWED_ORIGINS
  */
 export const env = { ...parsed.data };

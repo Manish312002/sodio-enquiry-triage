@@ -6,7 +6,9 @@
  *   - Always includes a timestamp and a level.
  *
  * Phase 0 implementation: writes to stdout/stderr with JSON-ish formatting.
- * Phase 9 (security hardening) will add correlation IDs and richer redaction.
+ * Phase 9 (security hardening) expanded the REDACT_KEYS list to cover the
+ * full set of secret-shaped key names that could leak via error context
+ * or extraction metadata.
  */
 
 const LEVELS = ['debug', 'info', 'warn', 'error'];
@@ -27,24 +29,60 @@ function format(level, message, extra) {
   }
 }
 
-const REDACT_KEYS = [
+/**
+ * Keys whose values must NEVER appear in logs.
+ *
+ * Phase 9 expansion: the original list covered the obvious cases (password,
+ * apiKey, authorization, token, secret, mongo URI variants). We added:
+ *   - `key` / `apikey` (case-insensitive variants seen in SDK error objects)
+ *   - `x-api-key` / `x-request-id` headers (defensive — the request ID is
+ *     safe to log but the convention is to log it as `requestId` in the
+ *     log context object, not the raw header name)
+ *   - `cookie` / `set-cookie` (defensive — this app does not use cookies,
+ *     but a future reverse proxy might)
+ *   - `privatekey` / `private_key` (defensive — never present in this app
+ *     today, but cheap to redact)
+ *
+ * The check is case-insensitive (lower-cased before comparison).
+ */
+const REDACT_KEYS = new Set([
   'password',
-  'apiKey',
+  'apikey',
   'api_key',
+  'api-key',
+  'key',
   'authorization',
+  'auth',
   'token',
+  'accesstoken',
+  'access_token',
+  'refreshtoken',
+  'refresh_token',
   'secret',
+  'clientsecret',
+  'client_secret',
+  'privatekey',
+  'private_key',
   'mongouri',
   'mongodb_uri',
   'uri',
-];
+  'connectionstring',
+  'connection_string',
+  'cookie',
+  'set-cookie',
+  'x-api-key',
+  'x-groq-api-key',
+  'x-gemini-api-key',
+  'groq_api_key',
+  'gemini_api_key',
+]);
 
 function redact(value) {
   if (value == null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(redact);
   const out = {};
   for (const [k, v] of Object.entries(value)) {
-    if (REDACT_KEYS.includes(k.toLowerCase())) {
+    if (REDACT_KEYS.has(k.toLowerCase())) {
       out[k] = '[REDACTED]';
     } else {
       out[k] = redact(v);

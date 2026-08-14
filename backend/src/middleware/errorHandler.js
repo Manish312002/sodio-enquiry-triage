@@ -56,7 +56,10 @@ export function errorHandler(err, req, res, next) {
 
   // Safe context only — never include the raw Error object (which may contain
   // env-derived data) in client responses.
+  // Phase 9 — include req.id (correlation/request ID per Rules.md §12) so
+  // every error log line can be traced back to a single request.
   const logContext = {
+    requestId: req?.id || null,
     method: req.method,
     path: req.path,
     code,
@@ -70,10 +73,15 @@ export function errorHandler(err, req, res, next) {
     logger.warn('Client error:', err.message, logContext);
   }
 
+  // Phase 9 — echo the request ID in the JSON error response so the client
+  // can include it in a support ticket / log search. The X-Request-Id
+  // response header is already set by requestId() middleware; this is a
+  // convenience for programmatic clients that prefer JSON.
   res.status(status).json({
     error: {
       code,
       message: safeMessage,
+      requestId: req?.id || null,
     },
   });
 }

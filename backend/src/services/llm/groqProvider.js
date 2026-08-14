@@ -44,6 +44,7 @@ import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { SYSTEM_PROMPT, buildUserMessage } from './extractionPrompt.js';
 import { extractionSchema } from './extractionSchema.js';
+import { GROQ_TEXT_FORMAT } from './extractionJsonSchema.js';
 
 export const PROVIDER_NAME = 'groq';
 
@@ -206,15 +207,25 @@ export async function extract(enquiryText) {
       // input — preserves the prompt-injection boundary, Rules.md §4).
       // `input` is the user message that wraps the untrusted enquiry in
       // a literal data fence (see extractionPrompt.buildUserMessage).
-      // `text.format` enforces JSON output (OpenAI-compatible shape).
+      //
+      // `text.format` requests STRUCTURED OUTPUT via the OpenAI-compatible
+      // `json_schema` format (openai@7.4.0 SDK supports this on the
+      // Responses API). The canonical schema is the SAME contract enforced
+      // by Zod post-response (extractionSchema.js) and documented in the
+      // system prompt (extractionPrompt.js). All three are kept
+      // hand-aligned via extractionJsonSchema.js.
+      //
+      // `strict:false` is intentional: OpenAI strict mode requires
+      // `additionalProperties:false` on every object, but our
+      // `timeline.normalized` field is intentionally open-shaped
+      // (Rules.md §7 — opportunistic urgency/duration/period markers).
+      // See extractionJsonSchema.js header for the full rationale.
       const response = await client.responses.create({
         model: env.GROQ_MODEL,
         instructions: SYSTEM_PROMPT,
         input: buildUserMessage(enquiryText),
         temperature: 0,
-        // Request strict JSON output. Groq's OpenAI-compatible endpoint
-        // honours `text.format: { type: 'json_object' }`.
-        text: { format: { type: 'json_object' } },
+        text: GROQ_TEXT_FORMAT,
       });
 
       const content = response.output_text;
@@ -317,7 +328,12 @@ export async function extract(enquiryText) {
   throw lastError || new Error('Groq extraction failed.');
 }
 
-export const promptContract = { SYSTEM_PROMPT, buildUserMessage, extractionSchema };
+export const promptContract = {
+  SYSTEM_PROMPT,
+  buildUserMessage,
+  extractionSchema,
+  textFormat: GROQ_TEXT_FORMAT,
+};
 
 const groqProvider = { name: PROVIDER_NAME, isConfigured, extract };
 export default groqProvider;

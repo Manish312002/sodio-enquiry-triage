@@ -34,7 +34,7 @@ export default function SortBar() {
               type="button"
               onClick={() => dispatch(setSortBy(opt.value))}
               aria-pressed={isActive}
-              className={`px-2 py-0.5 font-mono text-micro tracking-widest transition-colors ${
+              className={`px-2 py-0.5 font-mono text-micro tracking-widest transition-colors duration-150 ${
                 isActive
                   ? 'bg-ink text-paper'
                   : 'text-ink-muted hover:bg-paper hover:text-ink'

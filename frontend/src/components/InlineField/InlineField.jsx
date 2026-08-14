@@ -259,13 +259,18 @@ export default function InlineField({ enquiry, field, label, block = false, mono
     </span>
   );
 
-  // Accent left border when overridden (design.md §8).
+  // Phase 10 — strengthened human-vs-model visual distinction (design.md §8).
+  // The accent left border remains the primary cue; we now add a very subtle
+  // accent-soft background tint so confirmed fields are still distinguishable
+  // when the operator scans the panel quickly. design.md §8 explicitly says
+  // "no dramatic colour fill" — the tint is at 30% opacity over the warm
+  // surface, so it reads as a faint highlighter mark, not a coloured block.
   const rowBorderClass = overridden
-    ? 'border-l-2 border-l-accent pl-2'
+    ? 'border-l-2 border-l-accent bg-accent-soft/30 -mx-1 px-1 py-1 pl-2'
     : 'border-l-2 border-l-transparent pl-2';
 
   return (
-    <div className={block ? `${rowBorderClass} block` : `${rowBorderClass} flex items-baseline gap-3`}>
+    <div className={`${rowBorderClass} transition-colors duration-150 ${block ? 'block' : 'flex items-baseline gap-3'}`}>
       {/* Label + chip */}
       <div className={block ? 'mb-1' : 'w-44 shrink-0'}>
         <div className="flex items-center gap-1.5">
@@ -279,11 +284,9 @@ export default function InlineField({ enquiry, field, label, block = false, mono
         {!editing ? (
           <div className="flex items-baseline gap-2 min-w-0">
             <span
-              className={`text-body text-ink ${
-                mono ? 'font-mono text-small break-all' : ''
-              } ${effectiveValue == null || effectiveValue === '' ? 'text-ink-muted/60' : ''} ${
-                block ? 'break-words' : 'truncate'
-              }`}
+              className={`flex-1 min-w-0 text-body text-ink ${
+                mono ? 'font-mono text-small break-all' : 'break-words whitespace-normal'
+              } ${effectiveValue == null || effectiveValue === '' ? 'text-ink-muted/60' : ''}`}
             >
               {formatFieldValue(effectiveValue, field)}
             </span>

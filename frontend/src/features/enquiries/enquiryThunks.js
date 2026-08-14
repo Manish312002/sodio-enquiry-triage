@@ -36,7 +36,7 @@
  * so the UI can render a readable error rather than a raw Error object.
  */
 import { createAsyncThunk } from '@reduxjs/toolkit';
-import apiClient from '../../services/api';
+import apiClient from '../../services/api.js';
 
 /**
  * @param {{ originalText: string, sender?: { name?: string, email?: string } }} payload
@@ -265,6 +265,91 @@ export const acceptNewModelValue = createAsyncThunk(
         `/enquiries/${payload.id}/fields/${payload.field}/accept-model`,
       );
       return data;
+    } catch (err) {
+      return rejectWithValue(normalizeError(err));
+    }
+  },
+);
+
+/**
+ * Phase 8 — import a sample-enquiries file and start batch extraction.
+ *
+ * Architechure.md §4 Flow B: Upload → POST /api/enquiries/import →
+ * parse → persist enquiries → create batch job → bounded concurrent
+ * extraction → GET /api/batches/:id → polling → batch progress UI.
+ *
+ * The backend parses the file, persists enquiries, creates a BatchJob,
+ * and kicks off background extraction (NOT awaited by the HTTP handler).
+ * The response includes a `batch` field with the batchId so the frontend
+ * can start polling GET /api/batches/:id immediately.
+ *
+ * The thunk returns the FULL response shape (enquiries + failed + meta +
+ * batch) so the slice can store the batchId and prepend the new enquiries
+ * to the queue.
+ *
+ * @param {File} file  The .txt file from the file input.
+ * @returns {Promise<{enquiries: object[], failed: object[], meta: object, batch: object|null}>}
+ */
+export const importBatch = createAsyncThunk(
+  'enquiries/importBatch',
+  async (file, { rejectWithValue }) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await apiClient.post('/enquiries/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        // File uploads can take longer than the default 10s timeout.
+        timeout: 60_000,
+      });
+      return data;
+    } catch (err) {
+      return rejectWithValue(normalizeError(err));
+    }
+  },
+);
+
+/**
+ * Phase 8 — fetch batch progress + counters.
+ *
+ * GET /api/batches/:id returns the current state of the batch: total,
+ * pending, processing, completed, failed, status, failures[].
+ *
+ * The frontend polls this endpoint while status === 'processing' and stops
+ * polling once status transitions to a terminal state (completed |
+ * completed_with_errors | failed).
+ *
+ * @param {string} batchId
+ * @returns {Promise<object>}  The batch response shape.
+ */
+export const fetchBatch = createAsyncThunk(
+  'enquiries/fetchBatch',
+  async (batchId, { rejectWithValue }) => {
+    try {
+      const { data } = await apiClient.get(`/batches/${batchId}`);
+      return data.batch;
+    } catch (err) {
+      return rejectWithValue(normalizeError(err));
+    }
+  },
+);
+
+/**
+ * Phase 8 — refresh batch counters from live enquiry state.
+ *
+ * POST /api/batches/:id/refresh recomputes the pending/processing/
+ * completed/failed counters from the enquiry documents. Useful after
+ * the operator retries a failed item via reExtractEnquiry (which
+ * bypasses batchService and leaves the counters stale).
+ *
+ * @param {string} batchId
+ * @returns {Promise<object>}  The refreshed batch response shape.
+ */
+export const refreshBatch = createAsyncThunk(
+  'enquiries/refreshBatch',
+  async (batchId, { rejectWithValue }) => {
+    try {
+      const { data } = await apiClient.post(`/batches/${batchId}/refresh`);
+      return data.batch;
     } catch (err) {
       return rejectWithValue(normalizeError(err));
     }

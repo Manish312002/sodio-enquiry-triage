@@ -5,6 +5,10 @@
  *   "A paper/document-like surface ... This section is immutable and visually
  *    labelled SOURCE."
  *
+ * design.md acceptance (Phase 10): "original text remains visually prominent".
+ * Phase 10 polish: stronger SOURCE label + IMMUTABLE pill + paper-tone
+ * background + visual breathing room around the <pre>.
+ *
  * Phase 1: renders the enquiry's `originalText` verbatim inside a <pre> with
  * monospace font. Whitespace, newlines, tabs, special characters, and
  * prompt-injection-style text are all preserved exactly as stored.
@@ -24,10 +28,20 @@ export default function OriginalMessage({ enquiry }) {
       })
     : '—';
 
+  const charCount = enquiry.originalText?.length ?? 0;
+
   return (
-    <section className="border border-line bg-surface-strong">
-      <div className="border-b border-line px-4 py-2 flex items-center justify-between">
-        <span className="font-mono text-micro tracking-widest text-ink-muted">SOURCE</span>
+    <section className="border border-line-strong bg-surface-strong">
+      <div className="border-b border-line-strong px-4 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-micro tracking-widest text-ink">SOURCE</span>
+          <span
+            className="font-mono text-micro tracking-widest text-ink-muted border border-line bg-paper px-1.5 py-0.5"
+            title="The original enquiry text is stored verbatim and can never be edited through the UI"
+          >
+            IMMUTABLE
+          </span>
+        </div>
         <span className="font-mono text-micro text-ink-muted">
           {enquiry.source?.toUpperCase?.()}
         </span>
@@ -54,12 +68,12 @@ export default function OriginalMessage({ enquiry }) {
           <span>{enquiry.extractionState?.toUpperCase?.()}</span>
         </div>
 
-        <pre className="font-mono text-body text-ink whitespace-pre-wrap break-words border-t border-line pt-3 mt-2 max-h-[60vh] overflow-auto">
+        <pre className="font-mono text-body text-ink whitespace-pre-wrap break-words border-t border-line pt-3 mt-2 leading-relaxed">
 {enquiry.originalText}
         </pre>
 
         <p className="font-mono text-micro text-ink-muted mt-3">
-          {enquiry.originalText?.length?.toLocaleString?.() || 0} chars · preserved verbatim · immutable
+          {charCount.toLocaleString()} chars · preserved verbatim · immutable
         </p>
       </div>
     </section>

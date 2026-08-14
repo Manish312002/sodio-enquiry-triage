@@ -60,7 +60,7 @@ export default function StatusTrack({ enquiryId, currentStatus }) {
               : 'text-ink-muted/60';
           const buttonClass = isCurrent
             ? 'cursor-default'
-            : 'cursor-pointer hover:text-ink transition-colors';
+            : 'cursor-pointer hover:text-ink transition-colors duration-150';
           return (
             <div key={s.key} className="flex items-center gap-1.5">
               <button

@@ -31,6 +31,7 @@ import {
 import { OVERRIDEABLE_FIELDS } from '../services/effectiveValueService.js';
 import { reExtract } from '../services/reExtractService.js';
 import { parseEnquiryFile, MAX_FILE_SIZE_BYTES } from '../services/parserService.js';
+import * as batchService from '../services/batchService.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
 
@@ -463,12 +464,26 @@ export const acceptNewModelValue = asyncHandler(async (req, res) => {
  * parsed record is persisted via enquiryService.createEnquiry() with
  * source='file' and the parsed receivedAt timestamp.
  *
+ * Phase 8 extension — after persisting, the endpoint:
+ *   1. Creates a BatchJob with total = enquiries.length.
+ *   2. Atomically sets `batchId` on all persisted enquiries (one updateMany).
+ *   3. Kicks off batchService.runBatchExtraction(batchId) WITHOUT awaiting
+ *      (fire-and-forget). The HTTP handler returns immediately with the
+ *      batchId so the frontend can start polling GET /api/batches/:id.
+ *
+ * Architechure.md §4 Flow B:
+ *   Upload → POST /api/enquiries/import → validate → parse → create
+ *   enquiry records → create batch job → bounded concurrent extraction →
+ *   GET /api/batches/:id → polling → batch progress UI.
+ *
  * Behaviour (Rules.md §12 Batch / §13 File Handling):
  *   - One failed block does NOT crash the import. Per-item failures are
  *     collected and returned in `failed[]`.
  *   - originalText is preserved EXACTLY (parser does no normalization).
- *   - No LLM calls. No priority scoring. No batch job creation.
- *     extractionState defaults to 'pending' — Phase 3 will pick them up.
+ *   - LLM extraction runs in the BACKGROUND after the HTTP response is sent.
+ *     The HTTP handler does NOT block on extraction.
+ *   - extractionState defaults to 'pending'; the background workers transition
+ *     it through processing → completed|failed.
  *
  * Request: multipart/form-data with field `file` containing a .txt file.
  * Response (200):
@@ -476,10 +491,14 @@ export const acceptNewModelValue = asyncHandler(async (req, res) => {
  *     enquiries: [<enquiry response shape>, ...],   // successfully persisted
  *     failed:    [{ blockIndex, reason }, ...],     // parse/persist failures
  *     meta:      { fileName, totalBlocks, parsedCount, persistedCount,
- *                  failedCount, skippedCount, warnings }
+ *                  failedCount, skippedCount, warnings },
+ *     batch:     { id, total, status, ... } | null  // Phase 8 — null if 0
+ *                                                     enquiries persisted
  *   }
  *
- * Phase 3 will extend this endpoint to start batch extraction after persist.
+ * If no enquiries were persisted (all blocks failed parsing/persistence),
+ * no BatchJob is created and `batch` is null. This avoids creating an empty
+ * batch that would immediately transition to 'completed' with total=0.
  */
 export const importEnquiries = asyncHandler(async (req, res) => {
   if (!req.file) {
@@ -531,7 +550,10 @@ export const importEnquiries = asyncHandler(async (req, res) => {
 
   // --- Persist each parsed record ---
   // One failure does NOT crash the batch (Rules.md §12).
+  // We collect the SAVED Mongoose documents (not just the API response shape)
+  // so we can set their batchId after the BatchJob is created.
   const enquiries = [];
+  const persistedDocs = [];
   const failed = [];
 
   for (const record of parsed.records) {
@@ -543,6 +565,7 @@ export const importEnquiries = asyncHandler(async (req, res) => {
         receivedAt: record.receivedAt,
       });
       enquiries.push(saved.toApiResponse());
+      persistedDocs.push(saved);
     } catch (err) {
       // AppError (validation etc.) or Mongoose error. Record the failure
       // and continue with the next record.
@@ -562,6 +585,46 @@ export const importEnquiries = asyncHandler(async (req, res) => {
   // Combine parser-level skipped blocks with persist-level failures.
   const allFailed = [...parsed.skipped, ...failed];
 
+  // --- Phase 8: create BatchJob + kick off background extraction ---
+  //
+  // Only create a batch if at least one enquiry was persisted. This avoids
+  // creating an empty batch (total=0) that would immediately transition to
+  // 'completed' — operators would see a meaningless batch in their history.
+  let batch = null;
+  if (persistedDocs.length > 0) {
+    // createBatch atomically sets batchId on all persisted enquiries via
+    // updateMany (see batchService.createBatch). The controller does NOT
+    // need to set batchId separately.
+    const batchDoc = await batchService.createBatch({
+      enquiryIds: persistedDocs.map((d) => String(d._id)),
+      fileName,
+    });
+
+    batch = batchDoc.toApiResponse();
+
+    // Fire-and-forget: kick off the worker pool WITHOUT awaiting. The HTTP
+    // handler returns immediately; the frontend polls GET /api/batches/:id
+    // to observe progress. Errors inside the pool are captured per-item
+    // (see batchService.runWorker) and NEVER propagate to the HTTP layer.
+    //
+    // We deliberately do NOT .catch() here — runBatchExtraction is designed
+    // to never reject (it catches everything internally). The .catch() is
+    // defensive only; if it ever fires, it logs without crashing the process.
+    batchService
+      .runBatchExtraction(String(batchDoc._id))
+      .catch((err) => {
+        logger.error('Import: background batch extraction failed unexpectedly', {
+          batchId: String(batchDoc._id),
+          message: err?.message,
+        });
+      });
+
+    logger.info('Import: batch created, background extraction started', {
+      batchId: String(batchDoc._id),
+      total: persistedDocs.length,
+    });
+  }
+
   res.status(200).json({
     enquiries,
     failed: allFailed,
@@ -574,6 +637,7 @@ export const importEnquiries = asyncHandler(async (req, res) => {
       skippedCount: parsed.meta.skippedCount,
       warnings: parsed.warnings,
     },
+    batch,
   });
 });
 

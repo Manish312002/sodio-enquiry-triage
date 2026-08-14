@@ -385,3 +385,51 @@ function sortKeys(value) {
   }
   return value;
 }
+
+// --- Phase 10 — keyboard navigation helper ----------------------------------
+
+/**
+ * Phase 10 — pure keyboard navigation helper for the enquiry queue.
+ *
+ * Extracted from EnquiryQueue.handleKeyDown so the logic can be unit-tested
+ * without a DOM library. The component calls this with the current state
+ * (number of items, current selected index, pressed key) and gets back the
+ * next index to select, or null if the key should be ignored.
+ *
+ * design.md §16: "Keyboard navigation should be possible through table rows
+ * and editable fields."
+ *
+ * Supported keys:
+ *   - 'ArrowDown'  → next row (clamp at last)
+ *   - 'ArrowUp'    → previous row (clamp at first)
+ *   - 'Home'       → first row
+ *   - 'End'        → last row
+ *
+ * When `currentIndex` is -1 (nothing selected yet), all four navigation keys
+ * move to row 0 — the operator's first arrow press selects the first enquiry.
+ *
+ * @param {number} length       Total number of items in the queue.
+ * @param {number} currentIndex Index of the currently-selected row, or -1.
+ * @param {string} key          The KeyboardEvent.key value.
+ * @returns {number|null} Next index to select, or null when the key is not a
+ *   navigation key or the queue is empty.
+ */
+export function nextQueueIndex(length, currentIndex, key) {
+  if (!Number.isInteger(length) || length <= 0) return null;
+  if (!Number.isInteger(currentIndex) || currentIndex < -1 || currentIndex >= length) {
+    return null;
+  }
+  const start = currentIndex < 0 ? 0 : currentIndex;
+  switch (key) {
+    case 'ArrowDown':
+      return Math.min(start + (currentIndex < 0 ? 0 : 1), length - 1);
+    case 'ArrowUp':
+      return Math.max(start - (currentIndex < 0 ? 0 : 1), 0);
+    case 'Home':
+      return 0;
+    case 'End':
+      return length - 1;
+    default:
+      return null;
+  }
+}

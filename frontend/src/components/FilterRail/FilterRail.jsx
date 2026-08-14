@@ -106,7 +106,7 @@ function FilterGroup({ label, options, value, onChange }) {
               <button
                 type="button"
                 onClick={() => onChange(opt.value)}
-                className={`w-full text-left px-2 py-1 text-body transition-colors ${
+                className={`w-full text-left px-2 py-1 text-body transition-colors duration-150 ${
                   isActive
                     ? 'bg-accent-soft text-ink border-l-2 border-l-accent -ml-px'
                     : 'text-ink-muted hover:bg-paper hover:text-ink border-l-2 border-l-transparent'

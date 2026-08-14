@@ -45,7 +45,10 @@ import {
   clearEnquiryFieldOverride,
   reExtractEnquiry,
   acceptNewModelValue,
-} from './enquiryThunks';
+  importBatch,
+  fetchBatch,
+  refreshBatch,
+} from './enquiryThunks.js';
 
 const initialState = {
   // Enquiry queue
@@ -104,6 +107,22 @@ const initialState = {
   acceptModelId: null,
   acceptModelField: null,
 
+  // Phase 8 — batch import + progress.
+  // The operator uploads a sample-enquiries file. The backend parses +
+  // persists + creates a BatchJob + kicks off background extraction. The
+  // frontend polls GET /api/batches/:id until the batch reaches a
+  // terminal state (completed | completed_with_errors | failed).
+  //
+  // batch = the latest batch response shape (or null if no batch yet).
+  // batchStatus = lifecycle of the IMPORT + POLLING thunks.
+  // batchPolling = true while the polling hook is active.
+  batch: null,
+  batchImportStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
+  batchImportError: null,
+  batchFetchStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
+  batchFetchError: null,
+  batchPolling: false,
+
   // Phase 0 — system health
   system: {
     health: null,
@@ -145,10 +164,35 @@ const enquirySlice = createSlice({
       state.createError = null;
     },
     setSelectedId(state, action) {
-      state.selectedId = action.payload;
-      state.selected = null;
-      state.selectedStatus = 'idle';
-      state.selectedError = null;
+      const newId = action.payload;
+      state.selectedId = newId;
+      // BUG 2 FIX: resolve `selected` from the current `items` array
+      // instead of clearing it to null. Previously this reducer set
+      // `selected = null`, which caused EnquiryDetail to render "NO
+      // ENQUIRY SELECTED" whenever the operator clicked a queue row —
+      // because nothing else restored `selected` afterwards (no
+      // fetchEnquiry was dispatched for queue clicks).
+      //
+      // Now: if the clicked enquiry is already in `items` (the common
+      // case — the queue is populated), use that enquiry object
+      // directly so the detail panel renders immediately. If it's NOT
+      // in `items` (e.g. restored from localStorage on a fresh page
+      // load before fetchEnquiries resolves), set `selectedStatus =
+      // 'pending'` so EnquiryDetail's effect can trigger a
+      // `fetchEnquiry(id)` to load it.
+      const found = newId ? state.items.find((e) => e.id === newId) : null;
+      if (found) {
+        state.selected = found;
+        state.selectedStatus = 'succeeded';
+        state.selectedError = null;
+      } else {
+        // Not in items — mark as pending so the component knows to
+        // trigger a fetchEnquiry. selected stays null until the fetch
+        // resolves.
+        state.selected = null;
+        state.selectedStatus = newId ? 'pending' : 'idle';
+        state.selectedError = null;
+      }
       // Phase 7 — clear re-extraction state when the selected enquiry changes.
       // Conflicts belong to a specific enquiry's re-extraction; switching
       // enquiries resets the conflict UI.
@@ -224,6 +268,24 @@ const enquirySlice = createSlice({
         (c) => c.field !== field,
       );
     },
+    // Phase 8 — clear the batch state. Called when the operator dismisses
+    // the batch progress panel after the batch reaches a terminal state.
+    // The underlying enquiries remain in the queue (they were prepended
+    // on import); only the batch progress state is cleared.
+    clearBatch(state) {
+      state.batch = null;
+      state.batchImportStatus = 'idle';
+      state.batchImportError = null;
+      state.batchFetchStatus = 'idle';
+      state.batchFetchError = null;
+      state.batchPolling = false;
+    },
+    // Phase 8 — mark whether the polling hook is active. The hook reads
+    // this to avoid starting duplicate intervals; the slice uses it to
+    // decide whether to show "POLLING…" in the UI.
+    setBatchPolling(state, action) {
+      state.batchPolling = Boolean(action.payload);
+    },
   },
   extraReducers: (builder) => {
     // --- health (Phase 0) ---
@@ -294,6 +356,43 @@ const enquirySlice = createSlice({
       .addCase(fetchEnquiries.fulfilled, (state, action) => {
         state.listStatus = 'succeeded';
         state.items = action.payload.enquiries;
+        // BUG 1/2 FIX: re-resolve `selected` from the new `items` array
+        // after a fetch. Previously this reducer only replaced `items`
+        // and left `selected` untouched — which meant `selected` could
+        // hold a STALE copy of the enquiry (e.g. extractionState='pending'
+        // from createEnquiry.fulfilled) even though the fresh `items`
+        // array had the updated copy (extractionState='failed' after the
+        // auto-trigger re-extract completed). The detail panel would
+        // then show stale extraction state.
+        //
+        // Now: if selectedId is set, look it up in the new items. If
+        // found, update `selected` to the fresh copy so the detail panel
+        // reflects the latest server state (extractionState, priority,
+        // etc.). If NOT found (the enquiry was filtered out), clear
+        // selection intentionally — the operator changed filters and the
+        // selected enquiry is no longer visible.
+        if (state.selectedId) {
+          const fresh = state.items.find((e) => e.id === state.selectedId);
+          if (fresh) {
+            state.selected = fresh;
+            // Only upgrade status — don't downgrade a 'pending' from
+            // an in-flight fetchEnquiry (which will resolve shortly).
+            if (state.selectedStatus !== 'pending') {
+              state.selectedStatus = 'succeeded';
+            }
+          } else {
+            // Selected enquiry is no longer in the filtered/sorted
+            // result set. Clear selection intentionally.
+            state.selectedId = null;
+            state.selected = null;
+            state.selectedStatus = 'idle';
+            state.selectedError = null;
+            state.reExtractStatus = 'idle';
+            state.reExtractError = null;
+            state.reExtractId = null;
+            state.reExtractConflicts = [];
+          }
+        }
       })
       .addCase(fetchEnquiries.rejected, (state, action) => {
         state.listStatus = 'failed';
@@ -458,6 +557,95 @@ const enquirySlice = createSlice({
         state.acceptModelId = null;
         state.acceptModelField = null;
       });
+
+    // --- batch import (Phase 8) ---
+    // Tracks the in-flight POST /api/enquiries/import request. On
+    // fulfilled, stores the batch response and prepends the new enquiries
+    // to the queue so the operator sees them immediately.
+    builder
+      .addCase(importBatch.pending, (state) => {
+        state.batchImportStatus = 'pending';
+        state.batchImportError = null;
+      })
+      .addCase(importBatch.fulfilled, (state, action) => {
+        state.batchImportStatus = 'succeeded';
+        const { enquiries, batch } = action.payload;
+        // Prepend the new enquiries to the queue. The backend already
+        // persisted them; we don't need to refetch the list. The
+        // extractionState is 'pending' for each — the background workers
+        // will transition them as the batch progresses.
+        if (Array.isArray(enquiries) && enquiries.length > 0) {
+          const newIds = new Set(enquiries.map((e) => e.id));
+          state.items = [
+            ...enquiries,
+            ...state.items.filter((e) => !newIds.has(e.id)),
+          ];
+        }
+        // Store the batch so the polling hook can start fetching progress.
+        state.batch = batch ?? null;
+        // Clear any stale fetch error from a previous batch.
+        state.batchFetchStatus = 'idle';
+        state.batchFetchError = null;
+      })
+      .addCase(importBatch.rejected, (state, action) => {
+        state.batchImportStatus = 'failed';
+        state.batchImportError = action.payload ?? { message: 'Unknown error' };
+      });
+
+    // --- fetch batch progress (Phase 8) ---
+    // Tracks the in-flight GET /api/batches/:id request. On fulfilled,
+    // stores the latest batch state so the BatchProgress component can
+    // render the counters + status + failures.
+    builder
+      .addCase(fetchBatch.pending, (state) => {
+        state.batchFetchStatus = 'pending';
+        state.batchFetchError = null;
+      })
+      .addCase(fetchBatch.fulfilled, (state, action) => {
+        state.batchFetchStatus = 'succeeded';
+        state.batch = action.payload;
+        // When the batch reaches a terminal state, patch each enquiry in
+        // the queue so the queue's extractionState column reflects the
+        // final state. This avoids a full refetch — the operator sees
+        // the queue update in lockstep with the batch progress bar.
+        const batch = action.payload;
+        if (
+          batch &&
+          (batch.status === 'completed' ||
+            batch.status === 'completed_with_errors' ||
+            batch.status === 'failed')
+        ) {
+          // We don't know each enquiry's individual final state from the
+          // batch response alone (the batch only has aggregate counters).
+          // We COULD refetch the list, but that would be a heavy round-
+          // trip. Instead, we leave the queue as-is and let the operator's
+          // next filter/sort action (which triggers fetchEnquiries) bring
+          // the queue up to date. The BatchProgress panel shows the
+          // authoritative counts.
+        }
+      })
+      .addCase(fetchBatch.rejected, (state, action) => {
+        state.batchFetchStatus = 'failed';
+        state.batchFetchError = action.payload ?? { message: 'Unknown error' };
+      });
+
+    // --- refresh batch counters (Phase 8) ---
+    // Tracks the in-flight POST /api/batches/:id/refresh request. On
+    // fulfilled, stores the refreshed batch state. The operator triggers
+    // this manually via a [Refresh] button after retrying a failed item.
+    builder
+      .addCase(refreshBatch.pending, (state) => {
+        state.batchFetchStatus = 'pending';
+        state.batchFetchError = null;
+      })
+      .addCase(refreshBatch.fulfilled, (state, action) => {
+        state.batchFetchStatus = 'succeeded';
+        state.batch = action.payload;
+      })
+      .addCase(refreshBatch.rejected, (state, action) => {
+        state.batchFetchStatus = 'failed';
+        state.batchFetchError = action.payload ?? { message: 'Unknown error' };
+      });
   },
 });
 
@@ -478,6 +666,8 @@ export const {
   clearReExtractState,
   clearAcceptModelState,
   acknowledgeConflict,
+  clearBatch,
+  setBatchPolling,
 } = enquirySlice.actions;
 
 export default enquirySlice.reducer;

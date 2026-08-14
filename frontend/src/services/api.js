@@ -8,7 +8,13 @@
  */
 import axios from 'axios';
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
+// `import.meta.env` is a Vite-specific global. In Node (e.g. when the
+// slice is imported by unit tests), `import.meta.env` is undefined, so
+// we guard against that and fall back to '/api'. This doesn't affect
+// runtime behaviour because the tests never make real HTTP calls —
+// they only test the pure reducer logic.
+const env = (typeof import.meta !== 'undefined' && import.meta.env) || {};
+const baseURL = env.VITE_API_BASE_URL || '/api';
 
 export const apiClient = axios.create({
   baseURL,
