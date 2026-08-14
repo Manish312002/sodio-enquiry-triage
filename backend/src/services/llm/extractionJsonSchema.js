@@ -1,12 +1,11 @@
 /**
  * Canonical JSON Schema for LLM extraction output.
  *
- *
  * The Zod schema in `extractionSchema.js` is the FINAL server-side validator.
  * This JSON Schema is what we hand to the LLM provider (Groq via the OpenAI
- * Responses API `text.format.type='json_schema'`; Gemini via `response_format`)
- * so the model is told the canonical contract BEFORE it generates output —
- * not just validated after the fact.
+ * Chat Completions API `response_format.type='json_schema'`; Gemini via
+ * `responseSchema`) so the model is told the canonical contract BEFORE it
+ * generates output — not just validated after the fact.
  *
  * The two schemas are kept hand-aligned. Any change to one MUST be mirrored
  * in the other. Tests in `extractionSchema.test.js` and
@@ -111,16 +110,23 @@ export const EXTRACTION_JSON_SCHEMA = Object.freeze({
 });
 
 /**
- * Wrapper for the OpenAI Responses API `text.format` field.
+ * Wrapper for the OpenAI Chat Completions API `response_format` field.
  *
- * Shape: { type: 'json_schema', name, schema, strict }
+ * Shape: { type: 'json_schema', json_schema: { name, schema, strict } }
+ *
+ * This is the structured-output envelope documented at
+ * https://platform.openai.com/docs/guides/structured-outputs and supported
+ * by every OpenAI-compatible Chat Completions provider (Groq, Together,
+ * Anyscale, OpenRouter, Ollama, LM Studio, etc.). The earlier Responses
+ * API shape (`text.format.type='json_schema'`) was OpenAI-specific and
+ * rejected by providers that do not implement `/v1/responses`.
  *
  * `strict:false` — see file header for rationale (timeline.normalized is
- * intentionally open-shaped ).
+ * intentionally open-shaped).
  */
-export const GROQ_TEXT_FORMAT = Object.freeze({
-  format: Object.freeze({
-    type: 'json_schema',
+export const GROQ_RESPONSE_FORMAT = Object.freeze({
+  type: 'json_schema',
+  json_schema: Object.freeze({
     name: 'extraction',
     schema: EXTRACTION_JSON_SCHEMA,
     strict: false,

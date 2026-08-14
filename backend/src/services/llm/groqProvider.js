@@ -2,8 +2,13 @@
  * Groq provider — PRIMARY LLM adapter.
  *
  * Uses the official `openai` npm package pointed at Groq's OpenAI-compatible
- * endpoint. The `client.responses.create()` API is used per the operator
- * specification (verified to exist in `openai@7.4.0`).
+ * Chat Completions endpoint. The `client.chat.completions.create()` API is
+ * the universally-implemented OpenAI-compatible surface — every provider
+ * that exposes `/v1/chat/completions` (Groq, Together, Anyscale, OpenRouter,
+ * Ollama, LM Studio, …) accepts this call shape. The earlier implementation
+ * used `client.responses.create()` (the OpenAI Responses API), but that
+ * endpoint and its `text.format` parameter are OpenAI-specific and were
+ * rejected by providers that do not implement `/v1/responses`.
  *
  * (provider rules):
  *   1. Groq is attempted first.
@@ -44,7 +49,7 @@ import { env } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
 import { SYSTEM_PROMPT, buildUserMessage } from './extractionPrompt.js';
 import { extractionSchema } from './extractionSchema.js';
-import { GROQ_TEXT_FORMAT } from './extractionJsonSchema.js';
+import { GROQ_RESPONSE_FORMAT } from './extractionJsonSchema.js';
 
 export const PROVIDER_NAME = 'groq';
 
@@ -171,10 +176,10 @@ function classifyError(err) {
  * returned a response, it was just bad; retrying the same prompt against
  * the same model is unlikely to help and burns quota.
  *
- * Uses `client.responses.create()` (the Responses API) per the operator
- * specification. The response shape exposes `output_text` (concatenated
- * text from the model), which we then parse as JSON and validate against
- * the extraction schema.
+ * Uses `client.chat.completions.create()` (the Chat Completions API) — the
+ * universally-implemented OpenAI-compatible surface. The response shape
+ * exposes `choices[0].message.content` (the model's text output), which we
+ * then parse as JSON and validate against the extraction schema.
  *
  * @param {string} enquiryText
  * @returns {Promise<ExtractionResult>}
@@ -202,33 +207,40 @@ export async function extract(enquiryText) {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      // Use the Responses API per the operator specification.
-      // `instructions` is the trusted system prompt (separate from user
-      // input — preserves the prompt-injection boundary,.
-      // `input` is the user message that wraps the untrusted enquiry in
-      // a literal data fence (see extractionPrompt.buildUserMessage).
+      // Use the Chat Completions API — the universally-implemented
+      // OpenAI-compatible surface. Every provider that exposes
+      // `/v1/chat/completions` (Groq, Together, Anyscale, OpenRouter,
+      // Ollama, LM Studio, …) accepts this call shape.
       //
-      // `text.format` requests STRUCTURED OUTPUT via the OpenAI-compatible
-      // `json_schema` format (openai@7.4.0 SDK supports this on the
-      // Responses API). The canonical schema is the SAME contract enforced
-      // by Zod post-response (extractionSchema.js) and documented in the
-      // system prompt (extractionPrompt.js). All three are kept
-      // hand-aligned via extractionJsonSchema.js.
+      // Prompt-injection boundary: the trusted system prompt is sent as a
+      // separate `system` message; the untrusted enquiry is wrapped in a
+      // literal data fence (see extractionPrompt.buildUserMessage) and
+      // sent as a `user` message. The enquiry text is NEVER concatenated
+      // into the system prompt.
+      //
+      // `response_format` requests STRUCTURED OUTPUT via the
+      // OpenAI-compatible `json_schema` envelope. The canonical schema is
+      // the SAME contract enforced by Zod post-response
+      // (extractionSchema.js) and documented in the system prompt
+      // (extractionPrompt.js). All three are kept hand-aligned via
+      // extractionJsonSchema.js.
       //
       // `strict:false` is intentional: OpenAI strict mode requires
       // `additionalProperties:false` on every object, but our
       // `timeline.normalized` field is intentionally open-shaped
-      // — opportunistic urgency/duration/period markers).
+      // (opportunistic urgency/duration/period markers).
       // See extractionJsonSchema.js header for the full rationale.
-      const response = await client.responses.create({
+      const response = await client.chat.completions.create({
         model: env.GROQ_MODEL,
-        instructions: SYSTEM_PROMPT,
-        input: buildUserMessage(enquiryText),
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: buildUserMessage(enquiryText) },
+        ],
         temperature: 0,
-        text: GROQ_TEXT_FORMAT,
+        response_format: GROQ_RESPONSE_FORMAT,
       });
 
-      const content = response.output_text;
+      const content = response?.choices?.[0]?.message?.content;
       if (!content || typeof content !== 'string' || content.length === 0) {
         // Provider responded 2xx but with no usable content. Treat as
         // INVALID_OUTPUT (not recoverable) — retrying won't help.
@@ -332,7 +344,7 @@ export const promptContract = {
   SYSTEM_PROMPT,
   buildUserMessage,
   extractionSchema,
-  textFormat: GROQ_TEXT_FORMAT,
+  responseFormat: GROQ_RESPONSE_FORMAT,
 };
 
 const groqProvider = { name: PROVIDER_NAME, isConfigured, extract };

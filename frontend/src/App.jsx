@@ -100,84 +100,76 @@ export default function App() {
           : 'bg-danger';
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-paper">
-      <header className="shrink-0 border-b border-line bg-surface-strong">
-        <div className="px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-micro tracking-widest text-ink-muted">SODIO</span>
-            <span className="text-ink-muted">/</span>
-            <span className="font-mono text-micro tracking-widest text-ink-muted">
-              INBOX SIGNALS
-            </span>
-          </div>
-          <div className="flex items-center gap-4">
+  <div className="min-h-screen bg-paper">
+    <header className="border-b border-line bg-surface-strong">
+      <div className="px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-micro tracking-widest text-ink-muted">
+            SODIO
+          </span>
+
+          <span className="text-ink-muted">/</span>
+
+          <span className="font-mono text-micro tracking-widest text-ink-muted">
+            INBOX SIGNALS
+          </span>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <span className="font-mono text-micro text-ink-muted">
+            {itemCount} ENQUIRI{itemCount === 1 ? 'Y' : 'ES'}
+          </span>
+
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-2 w-2 rounded-full ${dotClass}`}
+              aria-hidden
+            />
+
             <span className="font-mono text-micro text-ink-muted">
-              {itemCount} ENQUIRI{itemCount === 1 ? 'Y' : 'ES'}
+              {status === 'pending'
+                ? 'CHECKING…'
+                : status === 'succeeded'
+                  ? `${health?.status?.toUpperCase?.()} · DB ${health?.db?.toUpperCase?.()}`
+                  : status === 'failed'
+                    ? 'OFFLINE'
+                    : 'IDLE'}
             </span>
-            <div className="flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden />
-              <span className="font-mono text-micro text-ink-muted">
-                {status === 'pending'
-                  ? 'CHECKING…'
-                  : status === 'succeeded'
-                    ? `${health?.status?.toUpperCase?.()} · DB ${health?.db?.toUpperCase?.()}`
-                    : status === 'failed'
-                      ? 'OFFLINE'
-                      : 'IDLE'}
-              </span>
-            </div>
           </div>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <main className="flex-1 min-h-0 w-full overflow-y-auto lg:overflow-hidden">
-        <div className="px-6 py-4 space-y-4 lg:h-full lg:flex lg:flex-col lg:min-h-0 lg:overflow-hidden">
-          {/* Compact paste strip — "feed intake" zone. */}
-          <div className="shrink-0">
-            <PasteEnquiry />
+    <main className="w-full">
+      <div className="px-6 py-4 space-y-4">
+
+        {/* Paste enquiry */}
+        <PasteEnquiry />
+
+        {/* Import enquiries */}
+        <BatchProgress />
+
+        {/* Workspace */}
+        <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(360px,1fr)_minmax(480px,1.5fr)] gap-4 items-start">
+
+          {/* Filter rail */}
+          <div className="min-w-0">
+            <FilterRail />
           </div>
 
-          {/* Batch import + progress. Sits beside the paste strip so the
-              operator has a single "intake" zone. Polls the backend while a
-              batch is processing; shows a segmented progress bar + per-item
-              retry. */}
-          <div className="shrink-0">
-            <BatchProgress />
+          {/* Queue */}
+          <div className="min-w-0 min-h-[400px]">
+            <EnquiryQueue />
           </div>
 
-          {/* Three-zone desktop layout.
-              At lg+ the grid fills the remaining viewport height and each
-              workspace column gets its own independent scroll container.
-              `lg:grid-rows-1` constrains the row to the grid container's
-              height (minmax(0,1fr)) so each column scrolls instead of the
-              row growing past the viewport and getting clipped.
-              Below lg the layout collapses to a single column and the page
-              scrolls naturally via <main>. */}
-          <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(360px,1fr)_minmax(480px,1.5fr)] lg:grid-rows-1 gap-4 lg:flex-1 lg:min-h-0">
-            {/* Filter rail — collapses below lg.
-                lg:h-full makes the wrapper fill the grid cell; lg:overflow-y-auto
-                scrolls the rail if it ever grows taller than the viewport. */}
-            <div className="lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
-              <FilterRail />
-            </div>
-
-            {/* Queue — independent vertical scroll at lg+ when the list is long.
-                overflow-x-hidden keeps long sender names / subjects from
-                forcing a horizontal page scrollbar. */}
-            <div className="min-w-0 min-h-[300px] lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
-              <EnquiryQueue />
-            </div>
-
-            {/* Detail workspace — independent vertical scroll at lg+.
-                This is the ONE primary scroll area for STATUS + SOURCE +
-                EXTRACTED + PRIORITY. overflow-x-hidden prevents long values
-                from forcing a horizontal page scrollbar. */}
-            <div className="min-w-0 min-h-[300px] lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
-              <EnquiryDetail />
-            </div>
+          {/* Detail */}
+          <div className="min-w-0 min-h-[400px]">
+            <EnquiryDetail />
           </div>
+
         </div>
-      </main>
-    </div>
-  );
+      </div>
+    </main>
+  </div>
+);
 }

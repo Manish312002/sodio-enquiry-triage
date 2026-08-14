@@ -1,7 +1,6 @@
 # SELF-REVIEW
 
-Three blunt review findings about this submission. The task brief
-(`Docs/Phases.md` §Phase 11) asks for "three blunt review findings"
+Three blunt review findings about this submission. The task brief asks for "three blunt review findings"
 — not three compliments with a polite criticism attached. Each
 finding below names a real gap, explains why it matters, and
 proposes the smallest fix that would close it.
@@ -95,7 +94,7 @@ have a rendering test.
 
 **Why it was skipped:**
 
-Phase 6 decision 10 (`Docs/memory.md`): "Full React component
+Phase 6 decision 10: "Full React component
 rendering tests would require adding `vitest` + `@testing-library/react`
 + `jsdom` as dev dependencies — Phase 3-5 deliberately added zero
 new test deps, and Phase 6 honours that constraint."
@@ -103,8 +102,7 @@ new test deps, and Phase 6 honours that constraint."
 **Why it matters:**
 
 This is the root cause of Mistake #3 in `AI-LOG.md` (the EXTRACTED
-panel overflow + clipped long values bug that needed commit
-`96ddc65` to fix). The pure-logic tests verified that
+panel overflow + clipped long values bug that needed commit to fix). The pure-logic tests verified that
 `formatFieldValue(budget)` returned the right string, but they
 couldn't catch that the string was being rendered inside a
 `truncate` span that clipped it. The bug was only visible in a
@@ -145,7 +143,7 @@ visual regression before it ships, not after.
 
 **What's missing:**
 
-The Canonical Extraction Contract Fix (commit `071f793`, documented
+The Canonical Extraction Contract Fix (commit, documented
 in `AI-LOG.md` Mistake #1) was driven by observed live Groq output
 (snake_case field names, `null` budget, `null` timeline). The fix
 layered a JSON Schema into the provider request so the model

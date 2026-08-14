@@ -40,7 +40,7 @@ const schema = z.object({
   // endpoint. GROQ_BASE_URL is configurable (defaults to the documented
   // Groq endpoint) so tests can point at a mock HTTP server.
   GROQ_API_KEY: z.string().default(''),
-  GROQ_MODEL: z.string().default('openai/gpt-oss-20b'),
+  GROQ_MODEL: z.string().default('openai/gpt-oss-120b'),
   GROQ_BASE_URL: z
     .string()
     .url()
