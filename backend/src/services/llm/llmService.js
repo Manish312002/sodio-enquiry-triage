@@ -1,20 +1,20 @@
 /**
- * LLM service — provider-agnostic facade (Phase 3, SDK-based).
+ * LLM service — provider-agnostic facade.
  *
- * Provider order (Rules.md §3):
+ * Provider order:
  *   Groq (primary)
  *     ↓ recoverable provider/API failure
  *   Gemini (secondary/fallback)
  *     ↓ failure (recoverable OR non-recoverable)
  *   Extraction failed state
  *
- * Phase 3 contract:
+ * contract:
  *   - Walks the provider chain in order.
  *   - For each provider, calls extract() and inspects the thrown error's
  *     `recoverable` flag:
  *       recoverable=true   → try the next provider
  *       recoverable=false  → STOP. Do not try the next provider.
- *                            (Rules.md §3: "do not automatically switch
+ *: "do not automatically switch
  *                            providers for every validation error".)
  *   - On success: returns a structured outcome with provider/model/parsed/
  *     rawOutput and per-attempt durationMs.
@@ -49,14 +49,14 @@ import { logger } from '../../utils/logger.js';
 /**
  * @typedef {Object} LlmOutcome
  * @property {'completed'|'failed'} state
- * @property {string|null} provider        The provider that succeeded (or null on total failure).
+ * @property {string|null} provider The provider that succeeded (or null on total failure).
  * @property {string|null} model
  * @property {import('./extractionSchema.js').Extraction|null} parsed
  * @property {unknown|null} rawOutput
  * @property {string|null} errorCode
- * @property {string|null} errorMessage    Safe, short, user-facing.
- * @property {number|null} durationMs      Total wall-clock across all attempts.
- * @property {ProviderAttempt[]} attempts  Per-provider audit trail.
+ * @property {string|null} errorMessage Safe, short, user-facing.
+ * @property {number|null} durationMs Total wall-clock across all attempts.
+ * @property {ProviderAttempt[]} attempts Per-provider audit trail.
  */
 
 /**
@@ -143,7 +143,7 @@ export async function extractWithFallback(enquiryText) {
       });
 
       // Non-recoverable (e.g. INVALID_OUTPUT) → STOP. Do NOT try next provider.
-      // Rules.md §3: "do not automatically switch providers for every
+      //: "do not automatically switch providers for every
       // validation error without distinguishing provider/API failure from
       // malformed model output."
       if (!recoverable) {

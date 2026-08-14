@@ -1,7 +1,7 @@
 /**
  * Centralized error handler.
  *
- * Contract (Rules.md §12):
+ * Contract:
  *   - Never expose raw stack traces to the client.
  *   - User-facing messages are short and readable.
  *   - Developer details are logged server-side with safe context.
@@ -31,7 +31,7 @@ export function asyncHandler(fn) {
 export class AppError extends Error {
   /**
    * @param {object} opts
-   * @param {string} opts.message   User-facing message (safe to expose).
+   * @param {string} opts.message User-facing message (safe to expose).
    * @param {number} [opts.status]  HTTP status (default 500).
    * @param {string} [opts.code]    Stable error code (e.g. 'EXTRACTION_FAILED').
    * @param {object} [opts.context] Extra safe context for logging (no secrets).
@@ -56,7 +56,7 @@ export function errorHandler(err, req, res, next) {
 
   // Safe context only — never include the raw Error object (which may contain
   // env-derived data) in client responses.
-  // Phase 9 — include req.id (correlation/request ID per Rules.md §12) so
+  // include req.id (correlation/request ID ) so
   // every error log line can be traced back to a single request.
   const logContext = {
     requestId: req?.id || null,
@@ -73,7 +73,7 @@ export function errorHandler(err, req, res, next) {
     logger.warn('Client error:', err.message, logContext);
   }
 
-  // Phase 9 — echo the request ID in the JSON error response so the client
+  // echo the request ID in the JSON error response so the client
   // can include it in a support ticket / log search. The X-Request-Id
   // response header is already set by requestId() middleware; this is a
   // convenience for programmatic clients that prefer JSON.

@@ -1,20 +1,20 @@
 /**
  * Enquiry controller.
  *
- * Phase 1 endpoints:
- *   POST /api/enquiries         create one enquiry from a paste
- *   GET  /api/enquiries/:id     fetch a single enquiry (for refresh retrieval)
- *   GET  /api/enquiries         list recent enquiries (basic; Phase 5 adds filters)
+ * endpoints:
+ *   POST /api/enquiries create one enquiry from a paste
+ *   GET  /api/enquiries/:id fetch a single enquiry (for refresh retrieval)
+ *   GET  /api/enquiries list recent enquiries (basic;
  *
- * Phase 2 endpoint:
- *   POST /api/enquiries/import  parse a sample-enquiries file and persist records
+ * endpoint:
+ *   POST /api/enquiries/import parse a sample-enquiries file and persist records
  *
- * Phase 3 endpoints:
- *   POST /api/enquiries/:id/extract       trigger LLM extraction for one enquiry
- *   GET  /api/enquiries/:id/extractions   list extraction versions for one enquiry
+ * endpoints:
+ *   POST /api/enquiries/:id/extract trigger LLM extraction for one enquiry
+ *   GET  /api/enquiries/:id/extractions list extraction versions for one enquiry
  *
- * Phase 4 endpoint:
- *   POST /api/enquiries/:id/recalculate-priority  recompute deterministic priority
+ * endpoint:
+ *   POST /api/enquiries/:id/recalculate-priority recompute deterministic priority
  *
  * Later phases add: PATCH (field edits), re-extract. Each has its own
  * controller method (added in this file when its phase lands).
@@ -47,7 +47,7 @@ const senderSchema = z
 
 const createEnquiryBodySchema = z
   .object({
-    source: z.literal('paste'), // Phase 1: only paste; file lands in Phase 2
+    source: z.literal('paste'), // paste source; file imports use 'file'
     originalText: z.string().min(1).max(enquiryService.MAX_ORIGINAL_TEXT_CHARS),
     sender: senderSchema,
   })
@@ -73,7 +73,7 @@ const updateStatusBodySchema = z
   .strict();
 
 /**
- * Phase 6 — PATCH /api/enquiries/:id/fields/:field body schema.
+ * PATCH /api/enquiries/:id/fields/:field body schema.
  *
  * The body must contain `value` (the override value). `value: null` is
  * the explicit "clear the override" signal — the service treats null as
@@ -149,13 +149,13 @@ export const getEnquiry = asyncHandler(async (req, res) => {
 /**
  * GET /api/enquiries
  *
- * Phase 5 — supports query filters + sorting (FR-05):
- *   ?serviceLine=web           filter by extracted service line
- *   ?priority=high             filter by computed priority level
- *   ?status=new                filter by workflow status
- *   ?sort=priority|receivedAt  sort by priority score or received date
- *   ?dir=asc|desc              sort direction (default desc)
- *   ?limit=50                  1..200
+ * supports query filters + sorting (FR-05):
+ *   ?serviceLine=web filter by extracted service line
+ *   ?priority=high filter by computed priority level
+ *   ?status=new filter by workflow status
+ *   ?sort=priority|receivedAt sort by priority score or received date
+ *   ?dir=asc|desc sort direction (default desc)
+ *   ?limit=50 1..200
  *
  * All filters accept 'all' (or omission) to skip. The response shape is
  * stable across phases so the frontend contract does not break.
@@ -186,18 +186,18 @@ export const listEnquiries = asyncHandler(async (req, res) => {
 /**
  * PATCH /api/enquiries/:id/status
  *
- * Phase 5 — move an enquiry through the workflow:
+ * move an enquiry through the workflow:
  *   new → contacted → qualified → dropped
  *
  * Body: { status: 'new' | 'contacted' | 'qualified' | 'dropped' }
  *
- * Rules.md §14: "Status changes are validated against allowed statuses."
+ *: "Status changes are validated against allowed statuses."
  * Linear order is NOT enforced — the operator may jump between any two
  * allowed states. Unknown enum values are rejected with 400.
  *
  * This endpoint does NOT modify originalText / receivedAt / sender /
  * effectiveExtraction / humanOverrides / priority / extractionState.
- * Those concerns belong to other phases (Phase 6 owns field edits).
+ * Those concerns belong to other phases (
  *
  * 200 -> { enquiry: <updated enquiry response shape> }
  * 400 on invalid id or invalid status
@@ -223,9 +223,9 @@ export const updateStatus = asyncHandler(async (req, res) => {
 /**
  * PATCH /api/enquiries/:id/fields/:field
  *
- * Phase 6 — apply a human override to a single extracted field.
+ * apply a human override to a single extracted field.
  *
- * Architechure.md §4 Flow C ("Human correction"):
+ * Flow C ("Human correction"):
  *   Edit field → save override → recalculate priority → return updated enquiry.
  *
  * Body: { value: <any> }
@@ -238,13 +238,13 @@ export const updateStatus = asyncHandler(async (req, res) => {
  * `sender`, etc. are NOT editable through this endpoint. This is the
  * security boundary: the client cannot inject arbitrary properties into
  * humanOverrides, cannot directly set priority, and cannot mutate
- * originalText (Rules.md §14).
+ * originalText.
  *
  * After the override is applied:
  *   1. `humanOverrides[field]` is set to the value (or null if cleared).
  *   2. `effectiveExtraction` is recomputed by merging modelExtraction +
  *      humanOverrides (effectiveValueService.computeEffectiveExtraction).
- *   3. Priority is recalculated by the existing Phase 4 scoringService
+ *   3. Priority is recalculated by the existing scoringService
  *      from the new effectiveExtraction (applyPriorityToEnquiry).
  *   4. The enquiry is saved and returned.
  *
@@ -299,15 +299,15 @@ export const updateField = asyncHandler(async (req, res) => {
 /**
  * POST /api/enquiries/:id/re-extract
  *
- * Phase 7 — safe re-extraction of an enquiry.
+ * safe re-extraction of an enquiry.
  *
- * Architechure.md §4 Flow D ("Re-extraction"):
+ * Flow D ("Re-extraction"):
  *   User clicks Re-extract → POST /api/enquiries/:id/re-extract →
  *   Create new extraction version → Grok → Gemini fallback →
  *   Validate → Compare with human overrides → Keep human-controlled
  *   fields → Expose conflicts → Recalculate priority → Return.
  *
- * The critical invariant (Rules.md §11):
+ * The critical invariant:
  *   A re-extraction is a new version, NOT an overwrite. Existing human
  *   overrides are PRESERVED. The new model extraction is stored as a new
  *   ExtractionVersion row (append-only) AND becomes the new
@@ -320,7 +320,7 @@ export const updateField = asyncHandler(async (req, res) => {
  * is returned in the response so the UI can surface the operator decision
  * (Keep confirmed / Accept new model) for each conflicted field.
  *
- * Failure behavior (Rules.md §12):
+ * Failure behavior:
  *   If re-extraction fails (both Groq and Gemini fail, or INVALID_OUTPUT),
  *   the existing modelExtraction, effectiveExtraction, humanOverrides, and
  *   priority are ALL preserved unchanged. Only extractionState transitions
@@ -331,7 +331,7 @@ export const updateField = asyncHandler(async (req, res) => {
  *     The server controls all of these.
  *   - The client cannot submit arbitrary model values as if they came from
  *     Groq/Gemini. The LLM service is the only source of model values.
- *   - originalText is NEVER modified (immutable per Rules.md §14).
+ *   - originalText is NEVER modified (immutable ).
  *   - The client cannot directly set priority. Priority is always derived
  *     from the effective extraction by the deterministic scoring service.
  *
@@ -375,7 +375,7 @@ export const reExtractEnquiry = asyncHandler(async (req, res) => {
 /**
  * POST /api/enquiries/:id/fields/:field/accept-model
  *
- * Phase 7 — explicit "accept the new model value" action for a conflicted
+ * explicit "accept the new model value" action for a conflicted
  * field.
  *
  * After a re-extraction produces a model value that conflicts with an
@@ -383,7 +383,7 @@ export const reExtractEnquiry = asyncHandler(async (req, res) => {
  *   - Keep the confirmed (human) value  → no API call (override stays)
  *   - Accept the new model value         → POST /fields/:field/accept-model
  *
- * "Accept new model" semantics (Rules.md §11, Architechure.md §7):
+ * "Accept new model" semantics,:
  *   - The human override for this field is CLEARED (set to null).
  *   - The effective value falls back to the latest modelExtraction value
  *     (which is the new model value, since re-extraction updated
@@ -459,24 +459,24 @@ export const acceptNewModelValue = asyncHandler(async (req, res) => {
 /**
  * POST /api/enquiries/import
  *
- * Phase 2 — multipart file upload. The uploaded file is parsed by
+ * multipart file upload. The uploaded file is parsed by
  * parserService.parseEnquiryFile() into structured input records. Each
  * parsed record is persisted via enquiryService.createEnquiry() with
  * source='file' and the parsed receivedAt timestamp.
  *
- * Phase 8 extension — after persisting, the endpoint:
+ * extension — after persisting, the endpoint:
  *   1. Creates a BatchJob with total = enquiries.length.
  *   2. Atomically sets `batchId` on all persisted enquiries (one updateMany).
  *   3. Kicks off batchService.runBatchExtraction(batchId) WITHOUT awaiting
  *      (fire-and-forget). The HTTP handler returns immediately with the
  *      batchId so the frontend can start polling GET /api/batches/:id.
  *
- * Architechure.md §4 Flow B:
+ * Flow B:
  *   Upload → POST /api/enquiries/import → validate → parse → create
  *   enquiry records → create batch job → bounded concurrent extraction →
  *   GET /api/batches/:id → polling → batch progress UI.
  *
- * Behaviour (Rules.md §12 Batch / §13 File Handling):
+ * Behaviour Batch / §13 File Handling):
  *   - One failed block does NOT crash the import. Per-item failures are
  *     collected and returned in `failed[]`.
  *   - originalText is preserved EXACTLY (parser does no normalization).
@@ -492,7 +492,7 @@ export const acceptNewModelValue = asyncHandler(async (req, res) => {
  *     failed:    [{ blockIndex, reason }, ...],     // parse/persist failures
  *     meta:      { fileName, totalBlocks, parsedCount, persistedCount,
  *                  failedCount, skippedCount, warnings },
- *     batch:     { id, total, status, ... } | null  // Phase 8 — null if 0
+ *     batch:     { id, total, status, ... } | null  // null if 0
  *                                                     enquiries persisted
  *   }
  *
@@ -549,7 +549,7 @@ export const importEnquiries = asyncHandler(async (req, res) => {
   });
 
   // --- Persist each parsed record ---
-  // One failure does NOT crash the batch (Rules.md §12).
+  // One failure does NOT crash the batch.
   // We collect the SAVED Mongoose documents (not just the API response shape)
   // so we can set their batchId after the BatchJob is created.
   const enquiries = [];
@@ -585,7 +585,7 @@ export const importEnquiries = asyncHandler(async (req, res) => {
   // Combine parser-level skipped blocks with persist-level failures.
   const allFailed = [...parsed.skipped, ...failed];
 
-  // --- Phase 8: create BatchJob + kick off background extraction ---
+  // --- ---
   //
   // Only create a batch if at least one enquiry was persisted. This avoids
   // creating an empty batch (total=0) that would immediately transition to
@@ -644,9 +644,9 @@ export const importEnquiries = asyncHandler(async (req, res) => {
 /**
  * POST /api/enquiries/:id/extract
  *
- * Phase 3 — trigger LLM extraction for one persisted enquiry.
+ * trigger LLM extraction for one persisted enquiry.
  *
- * Flow (Architechure.md §5):
+ * Flow:
  *   - Load enquiry (404 if not found).
  *   - Refuse if already 'processing' (409).
  *   - Call llmService.extractWithFallback(originalText):
@@ -665,9 +665,9 @@ export const importEnquiries = asyncHandler(async (req, res) => {
  *     outcome:    { state, provider, model, errorCode, errorMessage, durationMs }
  *   }
  *
- * Note: Phase 7 will add a separate `POST /api/enquiries/:id/re-extract`
+ * Note:
  * endpoint with explicit conflict-resolution semantics against human
- * overrides. Phase 3's `extract` is the simpler "first extraction" path.
+ * overrides.'s `extract` is the simpler "first extraction" path.
  */
 export const extractEnquiry = asyncHandler(async (req, res) => {
   const { enquiry, versions, outcome } = await extractionService.runExtraction(
@@ -699,7 +699,7 @@ export const extractEnquiry = asyncHandler(async (req, res) => {
 /**
  * GET /api/enquiries/:id/extractions
  *
- * Phase 3 — list all extraction versions for an enquiry, ordered by version.
+ * list all extraction versions for an enquiry, ordered by version.
  *
  * Response (200):
  *   {
@@ -707,7 +707,7 @@ export const extractEnquiry = asyncHandler(async (req, res) => {
  *     count: number
  *   }
  *
- * This endpoint exposes the audit trail so the operator (and Phase 7's
+ * This endpoint exposes the audit trail so the operator (and's
  * re-extraction conflict UI) can inspect what each provider returned.
  */
 export const listExtractions = asyncHandler(async (req, res) => {
@@ -732,7 +732,7 @@ export const listExtractions = asyncHandler(async (req, res) => {
 /**
  * POST /api/enquiries/:id/recalculate-priority
  *
- * Phase 4 — recompute the deterministic priority from the enquiry's CURRENT
+ * recompute the deterministic priority from the enquiry's CURRENT
  * effectiveExtraction + isGenuineProjectEnquiry values, and persist the result.
  *
  * This endpoint is the approved convenience mechanism for recalculating
@@ -740,11 +740,11 @@ export const listExtractions = asyncHandler(async (req, res) => {
  *   - call the LLM
  *   - modify originalText / receivedAt / sender / status
  *   - modify effectiveExtraction or humanOverrides
- *   - implement broader human-edit functionality (Phase 6 owns that)
+ *   - implement broader human-edit functionality (
  *
- * Architechure.md §4 Flow C shows the intended long-term shape: a human
- * edit saves an override, then priority is recalculated. Phase 4 ships
- * only the recalculation half; the override-saving half lands in Phase 6.
+ * Flow C shows the intended long-term shape: a human
+ * edit saves an override, then priority is recalculated. ships
+ * only the recalculation half; the override-saving half lands.
  * Until then, this endpoint is useful for:
  *   - re-scoring after a manual DB correction during ops
  *   - re-scoring the entire backlog after a scoring-rule tweak
@@ -772,7 +772,7 @@ export const recalculatePriority = asyncHandler(async (req, res) => {
  * uses .lean() for performance, so the instance method is unavailable
  * there — this helper keeps the response shape stable across endpoints.
  *
- * @param {object} o  Lean document from Mongoose.
+ * @param {object} o Lean document from Mongoose.
  * @returns {object}  API response shape (matches toApiResponse).
  */
 function toEnquiryResponseShape(o) {

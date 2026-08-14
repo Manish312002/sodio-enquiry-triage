@@ -1,9 +1,9 @@
 /**
- * PasteEnquiry — Phase 1 single-enquiry ingestion surface.
+ * PasteEnquiry — single-enquiry ingestion surface.
  *
- * Design (design.md §11 "Import Experience"): a compact "feed intake" strip,
- * NOT a giant drag-and-drop box. Phase 1 is paste-only; file upload lives in
- * Phase 2 and will sit beside this component.
+ * Design "Import Experience"): a compact "feed intake" strip,
+ * NOT a giant drag-and-drop box. is paste-only; file upload lives in
+ * and will sit beside this component.
  *
  * Behaviour:
  *   - Textarea bound to local state.
@@ -12,7 +12,7 @@
  *   - On success: shows a confirmation line + clears the textarea; App.jsx
  *     selects the new enquiry and renders OriginalMessage + EnquiryDetail.
  *   - On failure: shows the readable server message inline (no toast, per
- *     design.md §16 "Errors should appear close to the failed action").
+ * "Errors should appear close to the failed action").
  *
  * Local validation mirrors the backend (enquiryService.js): empty/whitespace-
  * only text is rejected client-side first so the round-trip is avoided.
@@ -69,7 +69,7 @@ export default function PasteEnquiry() {
     )
       .unwrap()
       .then((enquiry) => {
-        // Auto-trigger LLM extraction via the existing Phase 7 re-extract
+        // Auto-trigger LLM extraction via the existing re-extract
         // flow. This reuses runExtraction → llmService → Groq → Gemini
         // fallback and persists an ExtractionVersion. No duplicate
         // extraction logic is introduced here; we just dispatch the

@@ -1,12 +1,12 @@
 /**
- * EnquiryDetail — Phase 5.
+ * EnquiryDetail —.
  *
- * design.md §7 "Detail View": split evidence layout.
+ * "Detail View": split evidence layout.
  *   LEFT  — SOURCE:    paper-like surface with the immutable original message
  *   RIGHT — EXTRACTED: structured fields with MODEL / CONFIRMED distinction
  *
  * Plus a STATUS strip below the SOURCE panel showing the workflow state
- * track (design.md §9).
+ * track.
  *
  * States handled:
  *   - loading (fetchEnquiry pending)
@@ -14,17 +14,17 @@
  *   - no selection (initial idle state)
  *   - selected enquiry with extraction pending / processing / failed / completed
  *
- * Phase 5 explicitly does NOT implement:
- *   - inline field editing (Phase 6)
- *   - human override storage (Phase 6)
- *   - re-extraction (Phase 7)
- *   - extraction version comparison (Phase 7)
+ * explicitly does NOT implement:
+ *   - inline field editing
+ *   - human override storage
+ *   - re-extraction
+ *   - extraction version comparison
  *
  * Therefore no value is ever shown as CONFIRMED in this phase — all
  * rendered extracted values are labelled MODEL. The visual distinction
- * is prepared for Phase 6 via the `MODEL` chip on each field row.
+ * is prepared via the `MODEL` chip on each field row.
  *
- * BUG 2 FIX: this component now dispatches `fetchEnquiry(selectedId)`
+ * this component now dispatches `fetchEnquiry(selectedId)`
  * when `selectedId` is set but `selected` cannot be resolved from the
  * queue `items` (e.g. restored from localStorage on a fresh page load,
  * or when the queue hasn't been fetched yet). This ensures the detail
@@ -48,7 +48,7 @@ export default function EnquiryDetail() {
   const selectedError = useSelector((s) => s.enquiries.selectedError);
   const items = useSelector((s) => s.enquiries.items);
 
-  // BUG 2 FIX: if selectedId is set but `selected` is null (because the
+  // if selectedId is set but `selected` is null (because the
   // enquiry isn't in the queue `items`), trigger a fetchEnquiry to load
   // the full enquiry object. This handles:
   //   - localStorage restore on page load (before fetchEnquiries resolves)
@@ -112,7 +112,7 @@ export default function EnquiryDetail() {
 
   return (
     <div className="space-y-4">
-      {/* Status strip — design.md §9 horizontal state track */}
+      {/* Status strip — horizontal state track */}
       <section className="border border-line bg-surface">
         <div className="border-b border-line px-4 py-2 flex items-center justify-between">
           <span className="font-mono text-micro tracking-widest text-ink-muted">STATUS</span>

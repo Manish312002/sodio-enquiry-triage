@@ -1,7 +1,7 @@
 /**
- * App shell — Phase 5 Triage Console.
+ * App shell — Triage Console.
  *
- * Three-zone desktop layout (design.md §5):
+ * Three-zone desktop layout:
  *   ┌──────────────────────────────────────────────────────────┐
  *   │  HEADER  (SODIO / INBOX SIGNALS · count · health dot)    │
  *   ├─────────────┬──────────────────────┬─────────────────────┤
@@ -13,14 +13,14 @@
  *   └─────────────┴──────────────────────┴─────────────────────┘
  *
  * At narrow widths: filter rail collapses, queue becomes primary,
- * detail opens below (design.md §17).
+ * detail opens below.
  *
- * Phase 5 wiring:
+ * Wiring:
  *   - On mount + whenever filters/sort change → dispatch(fetchEnquiries({…}))
  *   - PasteEnquiry is still available above the queue (collapsible strip)
- *   - Health indicator in header (Phase 0)
+ *   - Health indicator in header
  *
- * Architectural boundaries (Rules.md §9, Architechure.md §14):
+ * Architectural boundaries:
  *   - No priority calculation in React — only display.
  *   - No direct LLM/MongoDB access — REST only.
  *   - Filters + sort are passed as query params to the backend.
@@ -49,12 +49,12 @@ export default function App() {
   const sort = useSelector((s) => s.enquiries.sort);
   const itemCount = useSelector((s) => s.enquiries.items.length);
 
-  // Phase 0 — health indicator on mount.
+  // Health indicator on mount.
   useEffect(() => {
     dispatch(fetchHealth());
   }, [dispatch]);
 
-  // Phase 5 — refetch whenever filters or sort change.
+  // Refetch whenever filters or sort change.
   // This is the single source of truth for queue state; FilterRail / SortBar
   // only dispatch reducer actions, they do not call the API directly.
   useEffect(() => {
@@ -70,8 +70,8 @@ export default function App() {
     );
   }, [dispatch, filters, sort]);
 
-  // Phase 1 — refresh retrieval: if we have no selection on mount, restore
-  // the last-created id from localStorage.
+  // Refresh retrieval: if we have no selection on mount, restore the
+  // last-created id from localStorage.
   useEffect(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(LAST_CREATED_KEY) : null;
     if (stored && !selectedId) {
@@ -100,8 +100,8 @@ export default function App() {
           : 'bg-danger';
 
   return (
-    <div className="min-h-full flex flex-col lg:h-full">
-      <header className="border-b border-line bg-surface-strong">
+    <div className="h-screen flex flex-col overflow-hidden bg-paper">
+      <header className="shrink-0 border-b border-line bg-surface-strong">
         <div className="px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="font-mono text-micro tracking-widest text-ink-muted">SODIO</span>
@@ -130,57 +130,53 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 w-full px-6 py-4 space-y-4 lg:flex lg:flex-col lg:min-h-0">
-        {/* Compact paste strip — design.md §11 "feed intake" */}
-        <div className="shrink-0">
-          <PasteEnquiry />
-        </div>
-
-        {/* Phase 8 — batch import + progress. Sits beside the paste strip
-            so the operator has a single "intake" zone. Polls the backend
-            while a batch is processing; shows a segmented progress bar +
-            per-item retry. */}
-        <div className="shrink-0">
-          <BatchProgress />
-        </div>
-
-        {/* Three-zone desktop layout.
-            At lg+ the grid fills the remaining viewport height (lg:flex-1 lg:min-h-0)
-            and each workspace column gets its own independent scroll container
-            (lg:overflow-y-auto). This keeps the EXTRACTED panel inside the
-            visible viewport instead of pushing the whole page taller than the
-            screen. Below lg the layout collapses to a single column and the
-            page scrolls naturally via <body> (no lg: classes apply). */}
-        <div className="grid grid-cols-1 lg:grid-cols-[200px_minmax(0,1fr)_minmax(0,1.5fr)] gap-4 items-start lg:items-stretch lg:flex-1 lg:min-h-0">
-          {/* Filter rail collapses below lg.
-              lg:self-start keeps the rail at its natural (short) height so it
-              does not stretch and leave a large empty block beside the queue. */}
-          <div className="lg:self-start lg:min-h-0">
-            <FilterRail />
+      <main className="flex-1 min-h-0 w-full overflow-y-auto lg:overflow-hidden">
+        <div className="px-6 py-4 space-y-4 lg:h-full lg:flex lg:flex-col lg:min-h-0 lg:overflow-hidden">
+          {/* Compact paste strip — "feed intake" zone. */}
+          <div className="shrink-0">
+            <PasteEnquiry />
           </div>
 
-          {/* Queue — independent vertical scroll at lg+ when the list is long. */}
-          <div className="lg:min-h-0 lg:overflow-y-auto">
-            <EnquiryQueue />
+          {/* Batch import + progress. Sits beside the paste strip so the
+              operator has a single "intake" zone. Polls the backend while a
+              batch is processing; shows a segmented progress bar + per-item
+              retry. */}
+          <div className="shrink-0">
+            <BatchProgress />
           </div>
 
-          {/* Detail workspace — independent vertical scroll at lg+.
-              This is the ONE primary scroll area for STATUS + SOURCE + EXTRACTED
-              + PRIORITY. overflow-x-hidden prevents long values from forcing a
-              horizontal page scrollbar. */}
-          <div className="lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
-            <EnquiryDetail />
+          {/* Three-zone desktop layout.
+              At lg+ the grid fills the remaining viewport height and each
+              workspace column gets its own independent scroll container.
+              `lg:grid-rows-1` constrains the row to the grid container's
+              height (minmax(0,1fr)) so each column scrolls instead of the
+              row growing past the viewport and getting clipped.
+              Below lg the layout collapses to a single column and the page
+              scrolls naturally via <main>. */}
+          <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(360px,1fr)_minmax(480px,1.5fr)] lg:grid-rows-1 gap-4 lg:flex-1 lg:min-h-0">
+            {/* Filter rail — collapses below lg.
+                lg:h-full makes the wrapper fill the grid cell; lg:overflow-y-auto
+                scrolls the rail if it ever grows taller than the viewport. */}
+            <div className="lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
+              <FilterRail />
+            </div>
+
+            {/* Queue — independent vertical scroll at lg+ when the list is long.
+                overflow-x-hidden keeps long sender names / subjects from
+                forcing a horizontal page scrollbar. */}
+            <div className="min-w-0 min-h-[300px] lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
+              <EnquiryQueue />
+            </div>
+
+            {/* Detail workspace — independent vertical scroll at lg+.
+                This is the ONE primary scroll area for STATUS + SOURCE +
+                EXTRACTED + PRIORITY. overflow-x-hidden prevents long values
+                from forcing a horizontal page scrollbar. */}
+            <div className="min-w-0 min-h-[300px] lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overflow-x-hidden">
+              <EnquiryDetail />
+            </div>
           </div>
         </div>
-
-        {/* Footer — shrink-0 so the grid (lg:flex-1) never pushes it out of
-            the viewport. At lg+ main is a flex column with min-h-0, so the
-            grid takes all remaining space after PasteEnquiry + BatchProgress +
-            this footer. The footer is always visible at the bottom. */}
-        <p className="mt-6 text-small text-ink-muted shrink-0">
-          Stack: React + Vite · Tailwind CSS · Redux Toolkit (createAsyncThunk) ·
-          Express · MongoDB + Mongoose · JavaScript only. Phase 10 — UX Polish + Verification.
-        </p>
       </main>
     </div>
   );

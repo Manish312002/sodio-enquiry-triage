@@ -1,8 +1,8 @@
 /**
- * SortBar — Phase 5.
+ * SortBar —.
  *
  * Compact sort controls above the enquiry queue. Two sort keys (priority
- * or receivedAt) + an asc/desc toggle. design.md §16 says keyboard-
+ * or receivedAt) + an asc/desc toggle. says keyboard-
  * friendly controls; these are simple <button> elements with aria-pressed.
  *
  * Default sort: receivedAt desc (most recent first). When the operator

@@ -1,22 +1,22 @@
 /**
- * InlineField — Phase 6.
+ * InlineField —.
  *
  * Reusable inline-editing component for a single extracted field.
  *
- * Visual states (design.md §7 "Detail View — Right — Extraction" + §8
+ * Visual states "Detail View — Right — Extraction" + §8
  * "Human vs Model Visual Language"):
  *
  *   1. MODEL (no override active):
- *      [MODEL chip] LABEL  value  [Edit]
+ *      [MODEL chip] LABEL value  [Edit]
  *      Neutral background, subtle MODEL label.
  *
  *   2. CONFIRMED (override active, not editing):
- *      [CONFIRMED chip] LABEL  value  [Edit] [Clear]
+ *      [CONFIRMED chip] LABEL value  [Edit] [Clear]
  *      Accent left border, accent CONFIRMED chip.
  *
  *   3. EDITING (operator clicked Edit):
  *      [MODEL/CONFIRMED chip] LABEL  [input] [Save] [Cancel]
- *      Input is focused; Enter saves, Esc cancels (design.md §16).
+ *      Input is focused; Enter saves, Esc cancels.
  *
  *   4. SAVING (PATCH /fields/:field in flight):
  *      [chip] LABEL  [input disabled] SAVING…
@@ -27,7 +27,7 @@
  *      ERROR: <message>
  *      Inline error message; input retains the operator's entered value
  *      so they can fix and retry. We do NOT optimistically destroy the
- *      existing value (Rules.md §12).
+ *      existing value.
  *
  * Per-field input variants:
  *   - text     : company, contactName, contactEmail, summary
@@ -72,9 +72,9 @@ const BUDGET_QUALIFIER_OPTIONS = [
 
 /**
  * @param {object} props
- * @param {object} props.enquiry  Enquiry response shape (see backend toApiResponse).
- * @param {string} props.field  One of OVERRIDEABLE_FIELDS.
- * @param {string} props.label  Display label (e.g. "COMPANY").
+ * @param {object} props.enquiry Enquiry response shape (see backend toApiResponse).
+ * @param {string} props.field One of OVERRIDEABLE_FIELDS.
+ * @param {string} props.label Display label (e.g. "COMPANY").
  * @param {boolean} [props.block=false]  Render as a block (multi-line) instead of inline.
  * @param {boolean} [props.mono=false]  Render the value with monospace font.
  */
@@ -88,7 +88,7 @@ export default function InlineField({ enquiry, field, label, block = false, mono
   const fieldUpdateField = useSelector((s) => s.enquiries.fieldUpdateField);
   const fieldUpdateError = useSelector((s) => s.enquiries.fieldUpdateError);
 
-  // Phase 7 — re-extraction conflict state.
+  // re-extraction conflict state.
   const reExtractConflicts = useSelector((s) => s.enquiries.reExtractConflicts);
   const acceptModelStatus = useSelector((s) => s.enquiries.acceptModelStatus);
   const acceptModelId = useSelector((s) => s.enquiries.acceptModelId);
@@ -99,7 +99,7 @@ export default function InlineField({ enquiry, field, label, block = false, mono
   const effectiveValue = getEffectiveValue(enquiry, field);
   const modelValue = getModelValue(enquiry, field);
 
-  // Phase 7 — check if this specific field has an active conflict.
+  // check if this specific field has an active conflict.
   // We read from the Redux conflicts array (populated by the re-extract
   // response) rather than recomputing locally, because the conflicts array
   // represents the operator's pending decisions. Once the operator resolves
@@ -113,7 +113,7 @@ export default function InlineField({ enquiry, field, label, block = false, mono
   const isThisFailed =
     fieldUpdateStatus === 'failed' && fieldUpdateId === enquiry?.id && fieldUpdateField === field;
 
-  // Phase 7 — accept-model lifecycle for this specific field.
+  // accept-model lifecycle for this specific field.
   const isThisAccepting =
     acceptModelStatus === 'pending' && acceptModelId === enquiry?.id && acceptModelField === field;
   const isThisAcceptFailed =
@@ -155,7 +155,7 @@ export default function InlineField({ enquiry, field, label, block = false, mono
     return undefined;
   }, [fieldUpdateStatus, dispatch]);
 
-  // Phase 7 — auto-clear the accept-model lifecycle state shortly after
+  // auto-clear the accept-model lifecycle state shortly after
   // a succeeded/failed result.
   useEffect(() => {
     if (acceptModelStatus === 'succeeded' || acceptModelStatus === 'failed') {
@@ -203,7 +203,7 @@ export default function InlineField({ enquiry, field, label, block = false, mono
       });
   }
 
-  // Phase 7 — Accept the new model value for a conflicted field.
+  // Accept the new model value for a conflicted field.
   // This dispatches the acceptNewModelValue thunk, which POSTs to
   // /fields/:field/accept-model. The backend clears the override, so
   // the effective value falls back to the new modelExtraction value
@@ -221,7 +221,7 @@ export default function InlineField({ enquiry, field, label, block = false, mono
       });
   }
 
-  // Phase 7 — Keep the confirmed (human) value for a conflicted field.
+  // Keep the confirmed (human) value for a conflicted field.
   // This is a CLIENT-SIDE ONLY action — no API call is needed because the
   // override is already preserved server-side. We just remove the field
   // from the local reExtractConflicts array so the CONFLICT UI disappears.
@@ -259,10 +259,10 @@ export default function InlineField({ enquiry, field, label, block = false, mono
     </span>
   );
 
-  // Phase 10 — strengthened human-vs-model visual distinction (design.md §8).
+  // strengthened human-vs-model visual distinction.
   // The accent left border remains the primary cue; we now add a very subtle
   // accent-soft background tint so confirmed fields are still distinguishable
-  // when the operator scans the panel quickly. design.md §8 explicitly says
+  // when the operator scans the panel quickly. explicitly says
   // "no dramatic colour fill" — the tint is at 30% opacity over the warm
   // surface, so it reads as a faint highlighter mark, not a coloured block.
   const rowBorderClass = overridden
@@ -355,7 +355,7 @@ export default function InlineField({ enquiry, field, label, block = false, mono
           </p>
         )}
 
-        {/* Phase 7 — CONFLICT UI.
+        {/* CONFLICT UI.
             Shown when this field has an active conflict (the new model value
             differs from the active human override). The operator must
             explicitly decide: keep the confirmed value or accept the new
@@ -523,7 +523,7 @@ function renderInput(field, draft, setDraft, ref, onKeyDown, disabled, mono, blo
 /**
  * BudgetInput — structured form for editing the 5 budget sub-fields.
  *
- * Preserves the existing budget structure (Rules.md §6):
+ * Preserves the existing budget structure:
  *   raw, currency, min, max, qualifier
  *
  * The operator can edit any subset of these. The `normalized` field is

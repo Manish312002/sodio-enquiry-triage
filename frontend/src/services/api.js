@@ -3,7 +3,7 @@
  *
  * - baseURL comes from VITE_API_BASE_URL (defaults to '/api', which the Vite
  *   dev server proxies to http://localhost:3001).
- * - No auth headers are sent (no authentication in this project, per PRD.md §6).
+ * - No auth headers are sent (no authentication in this project, ).
  * - LLM provider keys never live here — they are server-side only.
  */
 import axios from 'axios';

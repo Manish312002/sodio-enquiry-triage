@@ -1,11 +1,11 @@
 /**
  * Sample-enquiry file parser.
  *
- * Architechure.md §9 — file at `backend/src/services/parserService.js`.
+ * — file at `backend/src/services/parserService.js`.
  * (Renamed to `parserService.js` to match the architecture doc; lives at
  *  `backend/src/services/parserService.js` exactly as specified.)
  *
- * Phase 2 scope:
+ * scope:
  *   - Parse the operator-supplied sample-enquiries file format.
  *   - Identify individual enquiry boundaries by separator (line of dashes).
  *   - Extract From / Email / Received / Message fields per block.
@@ -14,7 +14,7 @@
  *   - Identify source as 'file' (set by the import endpoint, not the parser).
  *
  * Non-destructive handling of PDF-extraction artifacts (see
- * `Docs/phase2-inspection-report.md` for the full inspection report):
+ * for the full inspection report):
  *   - Form-feed (`\x0c`) characters that appear BETWEEN header lines (a
  *     side-effect of `pdftotext -layout` page breaks) are consumed by the
  *     header-line regex. They NEVER appear inside originalText in the real
@@ -24,11 +24,11 @@
  *   - Blocks missing one or more headers are still parsed; missing headers
  *     yield `null` and a warning. The block does NOT crash the import.
  *
- * Phase 2 deliberately does NOT:
+ * deliberately does NOT:
  *   - persist records (the import controller does that via enquiryService);
- *   - call the LLM (Phase 3);
- *   - compute priority (Phase 4);
- *   - create batch jobs (Phase 3).
+ *   - call the LLM;
+ *   - compute priority;
+ *   - create batch jobs.
  *
  * The parser is a PURE FUNCTION — given a string of file content, it returns
  * an array of parsed records plus metadata. No I/O, no side effects. This
@@ -83,8 +83,8 @@ export const MAX_BLOCKS_PER_FILE = 500;
  *   Message:
  *   <body, possibly multi-line, including trailing blank line(s)>
  *
- * @param {string} block  Raw block text (already split from the file).
- * @param {number} blockIndex  1-based index in the file (for debugging).
+ * @param {string} block Raw block text (already split from the file).
+ * @param {number} blockIndex 1-based index in the file (for debugging).
  * @returns {{record: object, warnings: string[]}}
  */
 function parseBlock(block, blockIndex) {
@@ -138,7 +138,7 @@ function parseBlock(block, blockIndex) {
   // ends with '\n' AND there is no content after that newline (i.e. it's the
   // artifact of how the split happened, not part of the message).
   //
-  // Actually — per Rules.md §14 "original enquiry text is immutable" — we
+  // Actually — "original enquiry text is immutable" — we
   // should NOT strip anything. The bytes between Message:\n and the next
   // separator are exactly what the file contains, and that's what we store.
   //
@@ -151,7 +151,7 @@ function parseBlock(block, blockIndex) {
   // Tests verify that originalText matches the bytes in the file exactly
   // between Message:\n and the separator.
 
-  // Validate non-empty (Rules.md §13: blank/short messages do not crash
+  // Validate non-empty: blank/short messages do not crash
   // the import, but we record them as a warning).
   if (originalText.trim().length === 0) {
     return {
@@ -227,7 +227,7 @@ function parseBlock(block, blockIndex) {
 /**
  * Parse a sample-enquiries file into structured input records.
  *
- * @param {string} fileContent  Raw file content (already decoded as UTF-8).
+ * @param {string} fileContent Raw file content (already decoded as UTF-8).
  * @param {object} [opts]
  * @param {string} [opts.fileName]  For logging/metadata only.
  * @returns {{

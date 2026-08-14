@@ -1,8 +1,8 @@
 /**
- * Human override service — Phase 6.
+ * Human override service —.
  *
- * Source-of-truth: Architechure.md §4 Flow C ("Human correction"),
- * Rules.md §10 ("Human Correction Rules"), Rules.md §14 ("Data Integrity").
+ *
+ * ("Human Correction Rules"), ("Data Integrity").
  *
  * Public surface:
  *   - applyHumanOverride(enquiryId, field, value)  → save override + recompute effective + recalc priority
@@ -10,27 +10,27 @@
  *   - validateFieldValue(field, value)             → throws AppError on invalid value shape
  *
  * Architectural boundaries:
- *   - The LLM is an extractor, NOT an authority (Rules.md §3). Human overrides
+ *   - The LLM is an extractor, NOT an authority. Human overrides
  *     do not call any LLM. They mutate `humanOverrides[field]` only.
  *   - `originalText`, `receivedAt`, `sender`, `status`, `extractionState`,
  *     `priority` are NEVER touched by this service.
- *   - Priority is always computed by the existing Phase 4 scoringService
+ *   - Priority is always computed by the existing scoringService
  *     from the new effectiveExtraction. The frontend never sees a separate
- *     "set priority" path (Rules.md §9).
+ *     "set priority" path.
  *   - The field name is validated against an explicit allowlist
  *     (`OVERRIDEABLE_FIELDS`). `priority`, `originalText`, `receivedAt`,
  *     `status`, etc. are NOT in the allowlist and will be rejected with 400.
  *     This is the security boundary the operator explicitly asked us to test
- *     (Phase 6 instructions: "test that a request attempting to set priority
+ *     (operator instruction: "test that a request attempting to set priority
  *     is rejected").
  *
- * Effective-value resolution (Architechure.md §7):
+ * Effective-value resolution:
  *   - When an override is applied, `effectiveExtraction` is recomputed by
  *     merging `modelExtraction` + `humanOverrides`.
  *   - When an override is cleared, the field falls back to the model value
  *     (sourced from `modelExtraction`, or `effectiveExtraction` for
- *     pre-Phase-6 records where `modelExtraction` is null).
- *   - `priority` is then recalculated by `applyPriorityToEnquiry` (Phase 4).
+ *     older records where `modelExtraction` is null).
+ *   - `priority` is then recalculated by `applyPriorityToEnquiry`.
  *
  * Persistence model:
  *   - `humanOverrides[field] = null` → no active override (fall back to model)
@@ -65,12 +65,12 @@ import {
  *   7. Recompute `effectiveExtraction` from `modelExtraction + humanOverrides`.
  *   8. If `field === 'isGenuineProjectEnquiry'`, also set the top-level
  *      `enquiry.isGenuineProjectEnquiry` (which is what scoringService reads).
- *   9. Recalculate priority via `applyPriorityToEnquiry` (Phase 4).
+ *   9. Recalculate priority via `applyPriorityToEnquiry`.
  *  10. Save and return the updated enquiry.
  *
  * @param {string} enquiryId
- * @param {string} field  One of OVERRIDEABLE_FIELDS.
- * @param {unknown} value  The override value (validated per-field). Pass `null`
+ * @param {string} field One of OVERRIDEABLE_FIELDS.
+ * @param {unknown} value The override value (validated per-field). Pass `null`
  *   to clear the override (same as `clearHumanOverride`).
  * @returns {Promise<import('../models/Enquiry.js').default>}
  * @throws {AppError} 400 INVALID_ID / INVALID_FIELD / INVALID_FIELD_VALUE;
@@ -147,7 +147,7 @@ export async function applyHumanOverride(enquiryId, field, value) {
   enquiry.markModified('effectiveExtraction');
   enquiry.markModified('isGenuineProjectEnquiry');
 
-  // 9. Recalculate priority from the new effectiveExtraction (Phase 4).
+  // 9. Recalculate priority from the new effectiveExtraction.
   const priority = applyPriorityToEnquiry(enquiry);
 
   // 10. Save and return.
@@ -286,7 +286,7 @@ export function validateFieldValue(field, value) {
 /**
  * Validate a budget override value.
  *
- * The budget override preserves the existing structure (Rules.md §6):
+ * The budget override preserves the existing structure:
  *   {
  *     raw: string,                  // original wording, e.g. "£40,000"
  *     currency: string|null,        // ISO code or symbol, e.g. "GBP" or "£"
@@ -364,7 +364,7 @@ function validateBudgetValue(value, reject) {
 /**
  * Validate a timeline override value.
  *
- * The timeline override preserves the existing structure (Rules.md §7):
+ * The timeline override preserves the existing structure:
  *   {
  *     raw: string,                  // original wording, e.g. "September"
  *     normalized: object|null       // opaque Mixed shape from the model
@@ -372,7 +372,7 @@ function validateBudgetValue(value, reject) {
  *
  * The operator typically only edits `raw`. The `normalized` field is
  * preserved as-is from the model (or from a prior override). We do not
- * invent dates (Rules.md §7).
+ * invent dates.
  *
  * @param {unknown} value
  * @param {(msg: string, ctx?: object) => AppError} reject

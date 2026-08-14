@@ -1,12 +1,12 @@
 /**
- * Multer file-upload middleware for the Phase 2 import endpoint.
+ * Multer file-upload middleware for the import endpoint.
  *
- * Architechure.md §8 — POST /api/enquiries/import accepts multipart/form-data.
+ * — POST /api/enquiries/import accepts multipart/form-data.
  *
- * Constraints (Rules.md §13 File Handling):
+ * Constraints File Handling):
  *   - Reasonable max file size: 5 MiB (sample fixture is 8 KB).
  *   - Reject unsupported file types: accept .txt only (the canonical parser
- *     input per Docs/memory.md). PDFs must be converted to .txt first via
+ *     input per. PDFs must be converted to .txt first via
  *     `pdftotext -layout` (the operator already did this — see test-data/).
  *   - Single file per request.
  *
@@ -58,7 +58,7 @@ function fileFilter(_req, file, cb) {
  * Single-file upload middleware. Use as:
  *   router.post('/import', upload.single('file'), controller.importEnquiries)
  *
- * Field name is `file` (per Architechure.md §8 convention).
+ * Field name is `file` ( convention).
  */
 export const uploadSingleEnquiryFile = multer({
   storage: multer.memoryStorage(),

@@ -1,18 +1,18 @@
 /**
  * Deterministic priority scoring service.
  *
- * Source-of-truth: Docs/Rules.md §9 ("Priority Scoring — Application Code Only").
  *
- * Phase 4 scope:
+ *
+ * scope:
  *   - Compute a deterministic priority score from the *effective* structured
  *     extraction fields (NOT from the raw enquiry text).
  *   - Produce an explainable result: { score, level, reasons }.
  *   - Provide an `applyPriorityToEnquiry` mutator used by extractionService
  *     after a successful extraction, and a `recalculatePriorityForEnquiry`
- *     loader used by the recalculate-priority endpoint (and later Phase 6
+ *     loader used by the recalculate-priority endpoint (and later
  *     human-edit flows).
  *
- * Architectural boundaries (Rules.md §3, §14):
+ * Architectural boundaries:
  *   - The LLM is an extractor, NOT an authority. Priority is computed by
  *     application code only. scoringService reads effectiveExtraction; it
  *     NEVER reads originalText and NEVER consults any LLM field that claims
@@ -20,7 +20,7 @@
  *   - `computePriority` is PURE: same input → same output, no I/O, no
  *     side-effects, no Date.now() drift, no Math.random().
  *   - `computePriority` does NOT use zod. Defensive plain-JS validation
- *     handles null / missing / malformed input. The Phase 4 authorisation
+ *     handles null / missing / malformed input. The authorisation
  *     explicitly forbids introducing zod here; existing zod usage in Phase
  *     0/1/3 (env, controller, extractionSchema, validateRequest) is left
  *     untouched.
@@ -28,30 +28,30 @@
  *     delegates to Enquiry + applyPriorityToEnquiry. `computePriority`
  *     itself has zero DB coupling so it can be unit-tested in isolation.
  *
- * Scoring rule summary (mirrors Rules.md §9 — do NOT invent alternatives):
+ * Scoring rule summary (mirrors — do NOT invent alternatives):
  *
- *   base                    0
+ *   base 0
  *   genuine project         +4
  *   not genuine             -5
  *   budget ≥ 100,000        +4   (major currency only: USD, GBP, EUR)
  *   budget 25,000–99,999    +3   (major currency only)
  *   budget < 25,000         +1   (major currency only)
  *   budget flexible/tbd     +1   (qualifier-based; no fabricated number)
- *   no budget               0
+ *   no budget 0
  *   timeline immediate      +3   (ASAP / today / next week / ≤1 week)
  *   timeline ≤ 6 weeks      +3
  *   timeline 1–3 months     +2
  *   timeline longer/Q1/3m+  +1
- *   timeline unknown        0
+ *   timeline unknown 0
  *   service fit (bespoke)   +1   (ai|blockchain|web|mobile|game)
- *   service other/unclear   0
+ *   service other/unclear 0
  *   existing client         +1   (keyword signal in summary/notes)
  *
- *   high   score ≥ 8
+ *   high score ≥ 8
  *   medium score 4–7
- *   low    score ≤ 3
+ *   low score ≤ 3
  *
- * Currency caution (Rules.md §9 closing note):
+ * Currency caution closing note):
  *   "For currencies with very different purchasing power, do not pretend
  *    numeric thresholds are economically equivalent."
  *   We only apply numeric thresholds when the currency is unambiguously a
@@ -65,7 +65,7 @@ import Enquiry from '../models/Enquiry.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
 
-// --- Public scoring thresholds (Rules.md §9) -------------------------------
+// --- Public scoring thresholds -------------------------------
 
 export const PRIORITY_THRESHOLDS = Object.freeze({
   HIGH_MIN: 8,
@@ -82,7 +82,7 @@ export const PRIORITY_LEVELS = Object.freeze({
 /**
  * Currencies for which the numeric thresholds in §9 are economically
  * meaningful. INR (lakhs), IDR, etc. are intentionally excluded —
- * Rules.md §9 explicitly warns against pretending numeric thresholds
+ * explicitly warns against pretending numeric thresholds
  * are equivalent across currencies with very different purchasing power.
  *
  * Matching is case-insensitive. We accept both ISO codes (USD, GBP, EUR)
@@ -91,7 +91,7 @@ export const PRIORITY_LEVELS = Object.freeze({
 const MAJOR_CURRENCIES = new Set(['USD', 'GBP', 'EUR', '$', '£', '€']);
 
 /**
- * Service lines that count as a positive service-fit signal (Rules.md §9:
+ * Service lines that count as a positive service-fit signal:
  * "AI, blockchain, bespoke web/platform, mobile, or game project: +1").
  * `other` yields 0.
  */
@@ -120,7 +120,7 @@ function toFiniteNumber(v) {
 
 /**
  * Determine whether a currency string/symbol is a "major" currency for which
- * the numeric budget thresholds in Rules.md §9 are economically meaningful.
+ * the numeric budget thresholds in are economically meaningful.
  *
  * @param {unknown} currency
  * @returns {boolean}
@@ -170,7 +170,7 @@ function safeLower(v) {
  *   - useNumeric: true only when the currency is a major currency AND
  *     we actually have a number. For INR-like or unknown currencies we
  *     return useNumeric=false so the caller falls back to the conservative
- *     non-numeric score (Rules.md §9 closing note).
+ *     non-numeric score closing note).
  *
  * @param {object|null|undefined} budget
  * @returns {{amount: number|null, useNumeric: boolean, currencyKnown: boolean}}
@@ -191,7 +191,7 @@ function resolveBudgetMagnitude(budget) {
 }
 
 /**
- * Score the budget dimension per Rules.md §9.
+ * Score the budget dimension .
  *
  * Returns { score, reasons }.
  *
@@ -227,7 +227,7 @@ function scoreBudget(budget) {
   }
   if (qualifier === 'range' || qualifier === 'exact') {
     // Range/exact qualifier but no usable number, OR currency is not major
-    // (e.g. INR lakhs). Rules.md §9: "use the numeric value only when the
+    // (e.g. INR lakhs).: "use the numeric value only when the
     // currency/scale is sufficiently clear; otherwise award the conservative
     // non-numeric score." So +1, never the numeric thresholds.
     if (currencyKnown && !useNumeric) {
@@ -251,7 +251,7 @@ function scoreBudget(budget) {
 }
 
 /**
- * Score the timeline dimension per Rules.md §7 / §9.
+ * Score the timeline dimension / §9.
  *
  * The extraction layer stores `timeline.normalized` as an open Mixed object
  * so the model can opportunistically mark urgency/duration/period without us
@@ -348,7 +348,7 @@ function scoreTimeline(timeline) {
     reasons.push(`timeline: longer/Q1 signal in raw`);
     return { score: 1, reasons };
   }
-  // "before <festival>" type relative markers — Rules.md §7 example
+  // "before <festival>" type relative markers — example
   // ("before Diwali"). Treat as relative → +1.
   if (/\b(before|by|prior to)\b/.test(raw)) {
     reasons.push(`timeline: relative marker in raw ("${raw.slice(0, 40)}")`);
@@ -361,7 +361,7 @@ function scoreTimeline(timeline) {
 }
 
 /**
- * Score the service-fit dimension per Rules.md §9.
+ * Score the service-fit dimension .
  *
  * Returns { score, reasons }.
  *
@@ -380,7 +380,7 @@ function scoreServiceFit(serviceLine) {
 }
 
 /**
- * Score the relationship / follow-up dimension per Rules.md §9.
+ * Score the relationship / follow-up dimension .
  *
  * We scan the summary and any additional-project note for explicit
  * follow-up / existing-client language. This is intentionally narrow —
@@ -413,7 +413,7 @@ function scoreRelationship({ summary, additionalProjectNote } = {}) {
 }
 
 /**
- * Map a numeric score to a priority level per Rules.md §9 thresholds.
+ * Map a numeric score to a priority level thresholds.
  *
  * @param {number} score
  * @returns {'high'|'medium'|'low'}
@@ -434,7 +434,7 @@ export function scoreToLevel(score) {
  * PURE FUNCTION — no I/O, no side-effects, no zod. Same input always
  * produces the same output.
  *
- * @param {object|null|undefined} effectiveExtraction  The enquiry's
+ * @param {object|null|undefined} effectiveExtraction The enquiry's
  *   `effectiveExtraction` subdocument (or any object shaped like it).
  *   May be null/undefined/empty — handled defensively.
  * @param {boolean|null|undefined} isGenuineProjectEnquiry
@@ -444,7 +444,7 @@ export function computePriority(effectiveExtraction, isGenuineProjectEnquiry) {
   const reasons = [];
   let score = 0;
 
-  // --- Project legitimacy (Rules.md §9) --------------------------------
+  // --- Project legitimacy --------------------------------
   // isGenuineProjectEnquiry is stored as Mixed on the Enquiry model, so we
   // must defend against strings, undefined, etc. Only an explicit true/false
   // counts; anything else is treated as "unknown" (no score, no penalty).
@@ -473,22 +473,22 @@ export function computePriority(effectiveExtraction, isGenuineProjectEnquiry) {
   const eff =
     effectiveExtraction && typeof effectiveExtraction === 'object' ? effectiveExtraction : {};
 
-  // --- Budget (Rules.md §9, §6) -----------------------------------------
+  // --- Budget -----------------------------------------
   const budget = scoreBudget(eff.budget);
   score += budget.score;
   reasons.push(...budget.reasons);
 
-  // --- Timeline (Rules.md §9, §7) ---------------------------------------
+  // --- Timeline ---------------------------------------
   const timeline = scoreTimeline(eff.timeline);
   score += timeline.score;
   reasons.push(...timeline.reasons);
 
-  // --- Service fit (Rules.md §9) ----------------------------------------
+  // --- Service fit ----------------------------------------
   const service = scoreServiceFit(eff.serviceLine);
   score += service.score;
   reasons.push(...service.reasons);
 
-  // --- Relationship / follow-up (Rules.md §9) --------------------------
+  // --- Relationship / follow-up --------------------------
   const relationship = scoreRelationship({
     summary: eff.summary,
     additionalProjectNote: eff.additionalProjectNote,
@@ -516,7 +516,7 @@ export function computePriority(effectiveExtraction, isGenuineProjectEnquiry) {
  * conservative priority and records the reasons. A failed/partial extraction
  * still yields a deterministic, explainable priority (typically 'low').
  *
- * @param {import('../models/Enquiry.js').default} enquiry  A Mongoose Enquiry
+ * @param {import('../models/Enquiry.js').default} enquiry A Mongoose Enquiry
  *   document (must have effectiveExtraction + isGenuineProjectEnquiry
  *   populated, even if to defaults).
  * @returns {{score: number, level: 'high'|'medium'|'low', reasons: string[]}}
@@ -540,7 +540,7 @@ export function applyPriorityToEnquiry(enquiry) {
  *
  * Loads the enquiry by id, applies `applyPriorityToEnquiry`, and saves.
  * Used by the POST /api/enquiries/:id/recalculate-priority endpoint and,
- * in later phases, by the human-edit flow (Rules.md §10: "immediately
+ * in later phases, by the human-edit flow: "immediately
  * recalculate priority" after a correction).
  *
  * This is the ONLY function in scoringService that touches MongoDB.

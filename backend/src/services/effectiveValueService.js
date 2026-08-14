@@ -1,10 +1,10 @@
 /**
- * Effective-value resolver — Phase 6.
+ * Effective-value resolver —.
  *
- * Source-of-truth: Architechure.md §7 ("Effective Value Resolution"),
- * Rules.md §10 ("Human Correction Rules"), Rules.md §11 ("Re-Extraction Rules").
  *
- * The core data relationship (Phase 6 objective):
+ * ("Human Correction Rules"), ("Re-Extraction Rules").
+ *
+ * The core data relationship:
  *
  *   SOURCE (original message)
  *     ↓
@@ -36,17 +36,17 @@
 /**
  * The explicit allowlist of fields the operator may override.
  *
- * Rules.md §14: "Human overrides are explicit." Only these field names are
+ *: "Human overrides are explicit." Only these field names are
  * accepted by the PATCH /api/enquiries/:id/fields/:field endpoint. Any
  * other field name (including `priority`, `originalText`, `receivedAt`,
  * `status`, `extractionState`, `batchId`) is rejected with 400.
  *
  * `priority` is intentionally NOT here — the operator cannot directly set
  * priority; it is always derived from the effective extraction by the
- * deterministic scoring service (Rules.md §9).
+ * deterministic scoring service.
  *
  * `originalText` is intentionally NOT here — the original enquiry text is
- * immutable (Rules.md §14).
+ * immutable.
  *
  * `isGenuineProjectEnquiry` is here even though it is a top-level enquiry
  * field (not nested under effectiveExtraction) because the LLM extraction
@@ -66,7 +66,7 @@ export const OVERRIDEABLE_FIELDS = Object.freeze([
 ]);
 
 /**
- * Service-line enum (Rules.md §5). Must match Enquiry.effectiveExtraction.serviceLine.
+ * Service-line enum. Must match Enquiry.effectiveExtraction.serviceLine.
  */
 export const SERVICE_LINES = Object.freeze([
   'ai',
@@ -78,7 +78,7 @@ export const SERVICE_LINES = Object.freeze([
 ]);
 
 /**
- * Budget qualifier enum (Rules.md §6). Must match Enquiry.effectiveExtraction.budget.qualifier.
+ * Budget qualifier enum. Must match Enquiry.effectiveExtraction.budget.qualifier.
  */
 export const BUDGET_QUALIFIERS = Object.freeze([
   'exact',
@@ -121,18 +121,18 @@ export function hasAnyOverride(humanOverrides) {
  * Get the source-of-truth model value for a single field.
  *
  * Falls back to effectiveExtraction when modelExtraction is null (this
- * happens for enquiries created before Phase 6 — Phase 3 wrote model
+ * happens for enquiries created — wrote model
  * output directly into effectiveExtraction, so the two are equivalent).
  *
- * @param {object} enquiry  Enquiry document (or response shape).
- * @param {string} field  One of OVERRIDEABLE_FIELDS.
+ * @param {object} enquiry Enquiry document (or response shape).
+ * @param {string} field One of OVERRIDEABLE_FIELDS.
  * @returns {unknown}  The model value (or undefined if neither source has it).
  */
 export function getModelValue(enquiry, field) {
   if (!enquiry) return undefined;
   if (field === 'isGenuineProjectEnquiry') {
     // isGenuineProjectEnquiry is a top-level field, not under effectiveExtraction.
-    // On pre-Phase-6 records, it lives directly on the enquiry. On Phase 6+
+    // On older records, it lives directly on the enquiry. On
     // records, it's still top-level (we don't duplicate it into modelExtraction).
     return enquiry.isGenuineProjectEnquiry ?? null;
   }
@@ -196,7 +196,7 @@ export function resolveEffectiveValue(enquiry, field) {
  * subdocument only; the caller is responsible for setting
  * `enquiry.isGenuineProjectEnquiry` separately if the override is active.
  *
- * @param {object} enquiry  Enquiry document with `modelExtraction`,
+ * @param {object} enquiry Enquiry document with `modelExtraction`,
  *   `effectiveExtraction`, and `humanOverrides` populated.
  * @returns {object}  A fresh plain object representing the merged
  *   effectiveExtraction. The caller assigns this to `enquiry.effectiveExtraction`.
@@ -206,8 +206,8 @@ export function computeEffectiveExtraction(enquiry) {
     return {};
   }
 
-  // Model source: prefer modelExtraction (Phase 6+), fall back to
-  // effectiveExtraction (pre-Phase-6 records where modelExtraction is null).
+  // Model source: prefer modelExtraction (), fall back to
+  // effectiveExtraction (older records where modelExtraction is null).
   const modelSrc =
     enquiry.modelExtraction && typeof enquiry.modelExtraction === 'object'
       ? enquiry.modelExtraction
@@ -222,7 +222,7 @@ export function computeEffectiveExtraction(enquiry) {
 
   // For each extraction sub-field, pick override if active, else model.
   // We deliberately do NOT touch projectCount or additionalProjectNote —
-  // those are model-only signals (Phase 6 boundary: the operator does not
+  // those are model-only signals (boundary: the operator does not
   // edit them through the field-edit endpoint).
   const eff = {
     company: pickOverride(overrides.company, modelSrc.company),

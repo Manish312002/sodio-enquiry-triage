@@ -1,7 +1,7 @@
 /**
- * Request ID middleware (Phase 9 — Security / AI Boundaries).
+ * Request ID middleware.
  *
- * Rules.md §12 ("Developer-facing") requires logging a correlation/request ID
+ * Requires logging a correlation/request ID
  * for every request so an operator can trace a single user-visible failure
  * back to the exact log lines that explain it.
  *

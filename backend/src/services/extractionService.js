@@ -3,39 +3,38 @@
  * persisted enquiry, and persists the outcome (success OR failure) as an
  * ExtractionVersion row.
  *
- * Architechure.md §5 (provider flow):
+ * Provider flow:
  *   Enquiry
  *     ↓
  *   ExtractionService.runExtraction(enquiryId)
  *     ↓
  *   llmService.extractWithFallback(originalText)
- *     ├── Grok success → persist version, update enquiry.effectiveExtraction
- *     ├── Grok recoverable failure → Gemini
+ *     ├── Groq success → persist version, update enquiry.effectiveExtraction
+ *     ├── Groq recoverable failure → Gemini
  *     │     ├── Gemini success → persist BOTH versions, update enquiry
  *     │     └── Gemini failure → persist BOTH versions, mark enquiry failed
- *     └── Grok non-recoverable failure (INVALID_OUTPUT) → persist version,
+ *     └── Groq non-recoverable failure (INVALID_OUTPUT) → persist version,
  *           mark enquiry failed, DO NOT try Gemini
  *
- * Data integrity rules (Rules.md §14):
+ * Data integrity rules:
  *   - originalText is IMMUTABLE. We never write to it.
  *   - receivedAt is IMMUTABLE.
  *   - ExtractionVersions are APPEND-ONLY. We never update an existing row.
  *   - extractionState transitions: pending → processing → completed|failed
  *
- * Scope (Phase 3 + Phase 4):
- *   - Single-enquiry extraction. No batch orchestration (Phase 8).
+ * Scope:
+ *   - Single-enquiry extraction. No batch orchestration.
  *   - After a successful extraction, deterministic priority is computed and
- *     persisted on enquiry.priority (Phase 4 — scoringService).
- *   - No human override merging (Phase 6/7). effectiveExtraction is set
- *     directly from the model output.
+ *     persisted on enquiry.priority via scoringService.
+ *   - If human overrides already exist (e.g. re-extract on an edited enquiry),
+ *     they are re-merged so effectiveExtraction reflects the override.
  *
- * Failure model (Rules.md §12):
+ * Failure model:
  *   - A failed extraction does NOT corrupt the enquiry. originalText,
  *     receivedAt, sender, status are all untouched.
  *   - The enquiry's extractionState transitions to 'failed' and the
  *     effectiveExtraction is NOT updated (it stays at its default empty
- *     object, or retains the previous successful extraction if one
- *     exists — Phase 7's re-extraction flow will formalise this).
+ *     object, or retains the previous successful extraction if one exists).
  */
 import Enquiry from '../models/Enquiry.js';
 import ExtractionVersion from '../models/ExtractionVersion.js';
@@ -59,8 +58,7 @@ import { logger } from '../utils/logger.js';
  *      model output; set extractionState='completed'; set
  *      isGenuineProjectEnquiry from the model output.
  *   6. On failure: set extractionState='failed'; do NOT touch
- *      effectiveExtraction (preserve any prior success — Phase 7 will
- *      formalise the re-extract-conflict semantics).
+ *      effectiveExtraction (preserve any prior success).
  *   7. Return the persisted ExtractionVersion rows + the updated enquiry.
  *
  * @param {string} enquiryId
@@ -148,14 +146,14 @@ export async function runExtraction(enquiryId) {
   // 5/6. Update the enquiry based on the outcome.
   if (outcome.state === 'completed' && outcome.parsed) {
     // Success — copy the validated model output into effectiveExtraction.
-    // We do NOT touch humanOverrides (Phase 6/7 owns that).
+    // We do NOT touch humanOverrides here.
     //
-    // Phase 6 addition: also store a preserved copy in `modelExtraction`
-    // so that human overrides can be cleared (falling back to the model
-    // value) and the UI can show "MODEL value" alongside "CONFIRMED
-    // value". modelExtraction is the immutable model source; the
-    // effective-value resolver merges modelExtraction + humanOverrides
-    // into effectiveExtraction whenever an override changes.
+    // Also store a preserved copy in `modelExtraction` so that human
+    // overrides can be cleared (falling back to the model value) and the
+    // UI can show "MODEL value" alongside "CONFIRMED value". modelExtraction
+    // is the immutable model source; the effective-value resolver merges
+    // modelExtraction + humanOverrides into effectiveExtraction whenever
+    // an override changes.
     //
     // When NO overrides exist, effectiveExtraction === modelExtraction.
     enquiry.effectiveExtraction = {
@@ -182,21 +180,21 @@ export async function runExtraction(enquiryId) {
     };
     enquiry.isGenuineProjectEnquiry = Boolean(outcome.parsed.isGenuineProjectEnquiry);
 
-    // Phase 6: if any human overrides are already present (e.g. this is
-    // a re-extract on an enquiry the operator previously edited), re-merge
-    // them so effectiveExtraction reflects the override rather than the
-    // fresh model value. Phase 7 will formalise conflict display; Phase 6
-    // only guarantees the merge is consistent so priority is computed
-    // from the correct effective values.
+    // If any human overrides are already present (e.g. this is a re-extract
+    // on an enquiry the operator previously edited), re-merge them so
+    // effectiveExtraction reflects the override rather than the fresh model
+    // value. The re-extract service formalises conflict display; this merge
+    // only guarantees consistency so priority is computed from the correct
+    // effective values.
     if (enquiry.humanOverrides && hasAnyOverride(enquiry.humanOverrides)) {
       reapplyOverrides(enquiry);
     }
 
-    // Phase 4: compute deterministic priority from the effective extraction.
-    // Per Architechure.md §4 Flow A, scoring runs AFTER extraction persists
-    // effectiveExtraction and BEFORE enquiry.save(). This keeps priority
-    // derived from the same effective values the operator sees, and makes
-    // re-scoring trivial (Phase 6 human edits will call the same path).
+    // Compute deterministic priority from the effective extraction.
+    // Scoring runs AFTER extraction persists effectiveExtraction and BEFORE
+    // enquiry.save(). This keeps priority derived from the same effective
+    // values the operator sees, and makes re-scoring trivial (human edits
+    // call the same path).
     const priority = applyPriorityToEnquiry(enquiry);
 
     enquiry.extractionState = 'completed';

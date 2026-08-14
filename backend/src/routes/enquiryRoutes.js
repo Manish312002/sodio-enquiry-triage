@@ -2,18 +2,18 @@
  * Enquiry routes.
  * Mounted at /api/enquiries in app.js.
  *
- * Architechure.md §8 API surface (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + Phase 7 subset):
- *   POST   /api/enquiries                                       (Phase 1) paste one enquiry
- *   POST   /api/enquiries/import                                (Phase 2) multipart file upload + parse + persist
- *   GET    /api/enquiries                                       (Phase 1+5) list recent (with filters + sort)
- *   GET    /api/enquiries/:id                                   (Phase 1) fetch one
- *   POST   /api/enquiries/:id/extract                           (Phase 3) trigger LLM extraction
- *   GET    /api/enquiries/:id/extractions                       (Phase 3) list extraction versions
- *   POST   /api/enquiries/:id/recalculate-priority              (Phase 4) recompute priority
- *   PATCH  /api/enquiries/:id/status                            (Phase 5) update workflow status
- *   PATCH  /api/enquiries/:id/fields/:field                     (Phase 6) apply / clear a human override
- *   POST   /api/enquiries/:id/re-extract                        (Phase 7) safe re-extraction with conflict detection
- *   POST   /api/enquiries/:id/fields/:field/accept-model        (Phase 7) accept new model value for a conflicted field
+ * API surface:
+ *   POST   /api/enquiries paste one enquiry
+ *   POST   /api/enquiries/import multipart file upload + parse + persist
+ *   GET    /api/enquiries                                       list recent (with filters + sort)
+ *   GET    /api/enquiries/:id fetch one
+ *   POST   /api/enquiries/:id/extract trigger LLM extraction
+ *   GET    /api/enquiries/:id/extractions list extraction versions
+ *   POST   /api/enquiries/:id/recalculate-priority recompute priority
+ *   PATCH  /api/enquiries/:id/status update workflow status
+ *   PATCH  /api/enquiries/:id/fields/:field apply / clear a human override
+ *   POST   /api/enquiries/:id/re-extract safe re-extraction with conflict detection
+ *   POST   /api/enquiries/:id/fields/:field/accept-model accept new model value for a conflicted field
  *
  * Later phases mount additional routes (batch progress) on this same router.
  *
@@ -41,7 +41,7 @@ const router = Router();
 
 router.post('/', ctrl.createEnquiry);
 
-// Phase 2: multipart file upload
+// multipart file upload
 router.post(
   '/import',
   uploadSingleEnquiryFile.single('file'),
@@ -52,28 +52,28 @@ router.post(
 router.get('/', ctrl.listEnquiries);
 router.get('/:id', ctrl.getEnquiry);
 
-// Phase 3: LLM extraction
+// LLM extraction
 router.post('/:id/extract', ctrl.extractEnquiry);
 router.get('/:id/extractions', ctrl.listExtractions);
 
-// Phase 4: deterministic priority recalculation
+// deterministic priority recalculation
 router.post('/:id/recalculate-priority', ctrl.recalculatePriority);
 
-// Phase 5: workflow status mutation (FR-08)
+// workflow status mutation (FR-08)
 router.patch('/:id/status', ctrl.updateStatus);
 
-// Phase 7 (registered BEFORE Phase 6 PATCH so the more specific POST
+// (registered BEFORE PATCH so the more specific POST
 // route is matched first; verbs differ so there's no real collision,
 // but this is the safe ordering).
 // POST /:id/fields/:field/accept-model — explicit "accept new model value"
 // after a re-extraction conflict.
 router.post('/:id/fields/:field/accept-model', ctrl.acceptNewModelValue);
 
-// Phase 6: human override on a single extracted field.
+// human override on a single extracted field.
 // Body: { value: <any> } — null clears the override.
 router.patch('/:id/fields/:field', ctrl.updateField);
 
-// Phase 7: safe re-extraction with conflict detection.
+// safe re-extraction with conflict detection.
 router.post('/:id/re-extract', ctrl.reExtractEnquiry);
 
 export default router;

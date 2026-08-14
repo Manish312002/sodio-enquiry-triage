@@ -1,15 +1,15 @@
 /**
  * OriginalMessage — paper-like surface that renders the immutable source text.
  *
- * design.md §7 "Detail View — Left — Original":
+ * "Detail View — Left — Original":
  *   "A paper/document-like surface ... This section is immutable and visually
  *    labelled SOURCE."
  *
- * design.md acceptance (Phase 10): "original text remains visually prominent".
- * Phase 10 polish: stronger SOURCE label + IMMUTABLE pill + paper-tone
+ * design.md acceptance: "original text remains visually prominent".
+ * polish: stronger SOURCE label + IMMUTABLE pill + paper-tone
  * background + visual breathing room around the <pre>.
  *
- * Phase 1: renders the enquiry's `originalText` verbatim inside a <pre> with
+ *: renders the enquiry's `originalText` verbatim inside a <pre> with
  * monospace font. Whitespace, newlines, tabs, special characters, and
  * prompt-injection-style text are all preserved exactly as stored.
  *

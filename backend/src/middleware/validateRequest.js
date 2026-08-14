@@ -2,9 +2,9 @@
  * Request validation middleware factory.
  *
  * Uses zod schemas to validate req.body / req.params / req.query.
- * On failure, responds 400 with a readable error shape (Rules.md §12).
+ * On failure, responds 400 with a readable error shape.
  *
- * Phase 0: file is scaffolded; no route consumes it yet (Phase 1+ will).
+ *: file is scaffolded; no route consumes it yet (will).
  */
 import { z } from 'zod';
 import { AppError } from './errorHandler.js';

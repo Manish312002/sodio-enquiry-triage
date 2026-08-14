@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /*
- * Signal Desk global tokens (design.md §3).
+ * Signal Desk global tokens.
  * Tailwind already exposes these as utility classes via tailwind.config.js;
  * the :root block exists so any non-Tailwind CSS (or future inline styles)
  * can also reference them.

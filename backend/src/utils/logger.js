@@ -1,12 +1,12 @@
 /**
  * Minimal structured logger.
  *
- * Safety contract (Rules.md §12 "Developer-facing"):
+ * Safety contract "Developer-facing"):
  *   - Never logs API keys, authorization headers, or full sensitive payloads.
  *   - Always includes a timestamp and a level.
  *
- * Phase 0 implementation: writes to stdout/stderr with JSON-ish formatting.
- * Phase 9 (security hardening) expanded the REDACT_KEYS list to cover the
+ * implementation: writes to stdout/stderr with JSON-ish formatting.
+ * (security hardening) expanded the REDACT_KEYS list to cover the
  * full set of secret-shaped key names that could leak via error context
  * or extraction metadata.
  */
@@ -32,7 +32,7 @@ function format(level, message, extra) {
 /**
  * Keys whose values must NEVER appear in logs.
  *
- * Phase 9 expansion: the original list covered the obvious cases (password,
+ * expansion: the original list covered the obvious cases (password,
  * apiKey, authorization, token, secret, mongo URI variants). We added:
  *   - `key` / `apikey` (case-insensitive variants seen in SDK error objects)
  *   - `x-api-key` / `x-request-id` headers (defensive — the request ID is

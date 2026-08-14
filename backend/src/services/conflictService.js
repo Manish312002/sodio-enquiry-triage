@@ -1,10 +1,7 @@
 /**
- * Conflict detection service — Phase 7.
+ * Conflict detection service.
  *
- * Source-of-truth: Rules.md §11 ("Re-Extraction Rules"), Architechure.md §7
- * ("Effective Value Resolution"), PRD.md FR-09 ("Re-extraction").
- *
- * The core invariant (Phase 7 objective):
+ * The core invariant:
  *
  *   A new model extraction MUST NEVER silently destroy an existing
  *   human override.
@@ -21,7 +18,7 @@
  * Conflict definition (per field):
  *
  *   1. humanOverrides[field] is active (non-null — `false`, `0`, `''`
- *      all count as active per Phase 6 override semantics).
+ *      all count as active per override semantics).
  *   2. The new model extraction provides a value for the same field
  *      (non-null, non-undefined).
  *   3. The new model value DIFFERS from the human override (deep-equal
@@ -49,10 +46,10 @@ export { OVERRIDEABLE_FIELDS };
 
 /**
  * @typedef {Object} FieldConflict
- * @property {string} field        One of OVERRIDEABLE_FIELDS.
- * @property {unknown} humanValue  The active override value.
- * @property {unknown} newModelValue  The new model extraction's value.
- * @property {true} hasConflict    Always true (only present for conflicts).
+ * @property {string} field One of OVERRIDEABLE_FIELDS.
+ * @property {unknown} humanValue The active override value.
+ * @property {unknown} newModelValue The new model extraction's value.
+ * @property {true} hasConflict Always true (only present for conflicts).
  */
 
 /**
@@ -62,8 +59,8 @@ export { OVERRIDEABLE_FIELDS };
  * conflict conditions (active override, model has a value, values differ).
  * Returns the list of fields where all three conditions hold.
  *
- * @param {object|null|undefined} humanOverrides  The enquiry.humanOverrides subdocument.
- * @param {object|null|undefined} newModelOutput  The new model extraction's parsed output
+ * @param {object|null|undefined} humanOverrides The enquiry.humanOverrides subdocument.
+ * @param {object|null|undefined} newModelOutput The new model extraction's parsed output
  *   (e.g. `outcome.parsed` from extractionService, or the latest ExtractionVersion.parsedOutput).
  *   Must contain the field values keyed by OVERRIDEABLE_FIELDS names.
  * @returns {FieldConflict[]}  Conflicts, one per conflicted field. Empty array if none.
@@ -76,7 +73,7 @@ export function detectConflicts(humanOverrides, newModelOutput) {
   for (const field of OVERRIDEABLE_FIELDS) {
     const humanValue = humanOverrides[field];
     // Condition 1: active override (non-null, non-undefined).
-    // Phase 6 semantics: false, 0, '' are NON-NULL and count as active.
+    // semantics: false, 0, '' are NON-NULL and count as active.
     if (humanValue === null || humanValue === undefined) continue;
 
     // Condition 2: new model provides a value for this field.
@@ -108,7 +105,7 @@ export function detectConflicts(humanOverrides, newModelOutput) {
  *
  * @param {object|null|undefined} humanOverrides
  * @param {object|null|undefined} newModelOutput
- * @param {string} field  One of OVERRIDEABLE_FIELDS.
+ * @param {string} field One of OVERRIDEABLE_FIELDS.
  * @returns {boolean}
  */
 export function hasConflict(humanOverrides, newModelOutput, field) {

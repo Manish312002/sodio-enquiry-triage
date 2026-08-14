@@ -1,5 +1,5 @@
 /**
- * Gemini provider — SECONDARY / FALLBACK LLM adapter (Phase 3, SDK-based).
+ * Gemini provider — SECONDARY / FALLBACK LLM adapter.
  *
  * Uses Google's official `@google/genai` SDK per the operator specification.
  * The `ai.interactions.create()` API is used (verified to exist in
@@ -7,9 +7,9 @@
  * available since Jul 21, 2026 per blog.google and ai.google.dev).
  *
  * Same contract as groqProvider. Only invoked when groqProvider.extract()
- * throws a RECOVERABLE provider/API failure (Rules.md §3, Architechure.md §5).
+ * throws a RECOVERABLE provider/API failure,.
  *
- * Prompt injection boundary (Rules.md §4):
+ * Prompt injection boundary:
  *   The trusted system instruction is sent via `system_instruction` (a
  *   top-level parameter on `ai.interactions.create()`, separate from the
  *   user `input`). The untrusted enquiry text is wrapped in a literal
@@ -19,7 +19,7 @@
  * Structured output:
  *   `response_format` is set to enforce JSON output conforming to our
  *   schema. The SDK passes this through to the model. We then re-validate
- *   with zod for defence in depth (Rules.md §5).
+ *   with zod for defence in depth.
  *
  * Error classification mirrors groqProvider (see that file for rationale).
  *
@@ -51,12 +51,12 @@ export function isConfigured() {
  *   - tests can mutate `env.GEMINI_API_KEY` between tests
  *   - the client picks up the latest env config at call time
  *
- * Phase 9 — the @google/genai SDK does not expose a per-request timeout
+ * the @google/genai SDK does not expose a per-request timeout
  * parameter on `interactions.create()` (unlike the OpenAI SDK's `timeout`
  * client option). We enforce a timeout EXTERNALLY via `withTimeout()` which
  * races the SDK promise against an AbortController-driven timeout. This
  * guarantees that a hung Gemini request cannot block the extraction chain
- * indefinitely (Rules.md §12 — provider timeout is a Phase 9 requirement).
+ * indefinitely — provider timeout is a requirement).
  *
  * @returns {GoogleGenAI}
  */
@@ -150,7 +150,7 @@ function classifyError(err) {
       };
     }
   }
-  // AbortError — timeout (Phase 9: withTimeout() in extract() rejects with
+  // AbortError — timeout (withTimeout() in extract() rejects with
   // an AbortError-named error when the SDK call exceeds env.LLM_TIMEOUT_MS).
   if (err?.name === 'AbortError') {
     return {
@@ -210,7 +210,7 @@ export async function extract(enquiryText) {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      // Phase 9 — wrap the SDK call in withTimeout() so a hung Gemini
+      // wrap the SDK call in withTimeout() so a hung Gemini
       // request cannot block the extraction chain indefinitely. The
       // timeout error is shaped to look like an AbortError so the
       // existing classifyError() path maps it to PROVIDER_TIMEOUT.

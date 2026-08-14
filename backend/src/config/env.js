@@ -5,17 +5,17 @@
  * Fails fast on missing/invalid configuration rather than starting a half-broken
  * server.
  *
- * Phase 0 rule: LLM API keys may be empty (no real LLM calls are made).
+ * rule: LLM API keys may be empty (no real LLM calls are made).
  * MONGODB_URI must be a non-empty string, but connectivity is verified at
  * startup, not here.
  *
- * Phase 3 note: `env` is intentionally NOT frozen. Application code treats
+ * note: `env` is intentionally NOT frozen. Application code treats
  * it as read-only at runtime (we never write to `env.X` in services). Tests
  * may mutate it per-test to exercise configured / not-configured paths
  * without re-importing modules. The previous `Object.freeze` made this
  * impossible because mock attempts threw "Cannot assign to read only property".
  *
- * Phase 3 SDK migration: provider vars renamed from GROK_* to GROQ_* (the
+ * SDK migration: provider vars renamed from GROK_* to GROQ_* (the
  * primary provider is now Groq, not xAI/Grok). Both providers use official
  * SDKs (`openai` and `@google/genai`) so the provider endpoint URLs are
  * no longer configurable — they're baked into the SDK defaults
@@ -59,7 +59,7 @@ const schema = z.object({
   // --- Batch processing ---
   BATCH_CONCURRENCY: z.coerce.number().int().positive().default(3),
 
-  // --- Phase 9: Security ---
+  // --- ---
   // CORS_ALLOWED_ORIGINS — comma-separated list of allowed origins for
   // browser requests. '*' (the default in development) allows any origin.
   // In production, set this to the explicit origin(s) of the deployed

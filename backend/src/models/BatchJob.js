@@ -1,10 +1,10 @@
 /**
  * BatchJob Mongoose model.
  *
- * Source-of-truth: Architechure.md §6 ("batchJobs collection"), §4 Flow B,
- * §12 ("Batch Concurrency"), §13 ("Failure Model"), Rules.md §12 ("Batch").
  *
- * Phase 8 scope:
+ * §12 ("Batch Concurrency"), §13 ("Failure Model"), ("Batch").
+ *
+ * scope:
  *   - One BatchJob per import operation (POST /api/enquiries/import with
  *     a multipart file). The batch tracks the progress of bounded-concurrency
  *     LLM extraction across all enquiries that were parsed + persisted from
@@ -14,7 +14,7 @@
  *     ExtractionVersion history. The BatchJob document ONLY holds aggregate
  *     counters + status — it never embeds extraction results.
  *
- * Counter semantics (Architechure.md §6 + §13):
+ * Counter semantics + §13):
  *   - total      — fixed at creation, equals the number of enquiries that
  *                  were persisted from the import (NOT the parsed-block
  *                  count, since some blocks may have been skipped by the
@@ -29,7 +29,7 @@
  *   - failed     — enquiries whose extraction ended in state='failed'
  *                  (both Groq and Gemini failed, OR INVALID_OUTPUT).
  *
- * Status state-machine (Architechure.md §6):
+ * Status state-machine:
  *
  *   processing  ──►  completed              (all items succeeded)
  *   processing  ──►  completed_with_errors  (≥1 item failed, ≥1 succeeded)
@@ -39,7 +39,7 @@
  * processing=0). The batchService.computeBatchStatus helper centralises the
  * decision so the controller and tests share one definition.
  *
- * Atomicity (Rules.md §12 "Batch"):
+ * Atomicity "Batch"):
  *   - Counter mutations use MongoDB `$inc` (atomic). Multiple concurrent
  *     workers can safely increment without read-modify-write races.
  *   - The terminal-status transition uses `findOneAndUpdate` with a filter
@@ -111,13 +111,13 @@ const batchJobSchema = new Schema(
 
 // Compound index for "find me the most recent batches" — used by the
 // operator's batch history list (not yet a UI surface; available for
-// Phase 10 polish).
+// polish).
 batchJobSchema.index({ createdAt: -1 });
 
 /**
  * Strip Mongoose internals for API responses.
  *
- * Response shape (Architechure.md §8 — GET /api/batches/:id):
+ * Response shape — GET /api/batches/:id):
  *   {
  *     id, total, pending, processing, completed, failed,
  *     status, fileName, createdAt, updatedAt, completedAt, failures

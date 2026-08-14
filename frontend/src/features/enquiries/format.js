@@ -1,13 +1,13 @@
 /**
- * Pure formatting helpers for the Phase 5 console.
+ * Pure formatting helpers for the console.
  *
  * Extracted from the React components so the formatting logic can be
  * unit-tested without a DOM library. The frontend does not have vitest
- * or @testing-library installed (Phase 3-4 deliberately added zero new
+ * or @testing-library installed (4 deliberately added zero new
  * test deps); these helpers are exercised with Node's built-in test
  * runner against the same enquiry response shape the backend returns.
  *
- * CRITICAL: nothing here recomputes priority (Rules.md §9). These are
+ * CRITICAL: nothing here recomputes priority. These are
  * pure display formatters only.
  */
 
@@ -160,7 +160,7 @@ export function extractionStateLabel(extractionState) {
   return null;
 }
 
-// --- Phase 6 — human override helpers -------------------------------------
+// --- -------------------------------------
 
 /**
  * The list of fields the operator can override through the
@@ -183,7 +183,7 @@ export const OVERRIDEABLE_FIELDS = Object.freeze([
 /**
  * Check whether a field on an enquiry has an active (non-null) human override.
  *
- * Phase 6 override semantics:
+ * override semantics:
  *   humanOverrides[field] === null  → no active override (use model value)
  *   humanOverrides[field] !== null → active override (false, 0, '' all count)
  *
@@ -201,7 +201,7 @@ export function hasOverride(humanOverrides, field) {
 
 /**
  * Get the model value for a field. Falls back to effectiveExtraction when
- * modelExtraction is null (pre-Phase-6 records). For isGenuineProjectEnquiry,
+ * modelExtraction is null (older records). For isGenuineProjectEnquiry,
  * reads the top-level enquiry field (it is not nested under modelExtraction).
  *
  * Mirrors the backend effectiveValueService.getModelValue logic so the UI
@@ -219,7 +219,7 @@ export function getModelValue(enquiry, field) {
     // WHEN no override is active. If an override is active, the top-level
     // field already reflects the override (the backend syncs them). So to
     // get the true model value, we'd need to look at the latest successful
-    // ExtractionVersion. For Phase 6, we fall back to the top-level value
+    // ExtractionVersion. For, we fall back to the top-level value
     // and let the UI label it MODEL only when no override is active.
     return enquiry.isGenuineProjectEnquiry ?? null;
   }
@@ -263,7 +263,7 @@ export function getEffectiveValue(enquiry, field) {
  * Used by InlineField to show the current effective value when not editing.
  *
  * @param {unknown} value
- * @param {string} field  Field name — used to pick the right formatter.
+ * @param {string} field Field name — used to pick the right formatter.
  * @returns {string}
  */
 export function formatFieldValue(value, field) {
@@ -280,10 +280,10 @@ export function formatFieldValue(value, field) {
   return String(value);
 }
 
-// --- Phase 7 — re-extraction conflict helpers ---------------------------------
+// --- — re-extraction conflict helpers ---------------------------------
 
 /**
- * Phase 7 — detect conflicts between active human overrides and a new model
+ * detect conflicts between active human overrides and a new model
  * extraction.
  *
  * Mirrors the backend `conflictService.detectConflicts` logic so the
@@ -298,7 +298,7 @@ export function formatFieldValue(value, field) {
  *   3. The two values differ (deep-equal for structured fields).
  *
  * @param {object|null|undefined} humanOverrides
- * @param {object|null|undefined} newModelOutput  The new model extraction's
+ * @param {object|null|undefined} newModelOutput The new model extraction's
  *   parsed output (e.g. `outcome.parsed` from the re-extract response, or
  *   `enquiry.modelExtraction` for the latest model snapshot).
  * @returns {Array<{field: string, humanValue: unknown, newModelValue: unknown, hasConflict: true}>}
@@ -321,7 +321,7 @@ export function detectConflicts(humanOverrides, newModelOutput) {
 }
 
 /**
- * Phase 7 — check whether a specific field has a conflict.
+ * check whether a specific field has a conflict.
  *
  * Convenience wrapper around detectConflicts for single-field checks.
  * Used by InlineField to decide whether to render the CONFLICT UI.
@@ -336,7 +336,7 @@ export function hasConflict(humanOverrides, newModelOutput, field) {
 }
 
 /**
- * Phase 7 — get the new model value for a specific field.
+ * get the new model value for a specific field.
  *
  * Returns `undefined` when the new model output does not provide a value
  * for the field (field absent, null, or undefined).
@@ -386,17 +386,17 @@ function sortKeys(value) {
   return value;
 }
 
-// --- Phase 10 — keyboard navigation helper ----------------------------------
+// --- ----------------------------------
 
 /**
- * Phase 10 — pure keyboard navigation helper for the enquiry queue.
+ * pure keyboard navigation helper for the enquiry queue.
  *
  * Extracted from EnquiryQueue.handleKeyDown so the logic can be unit-tested
  * without a DOM library. The component calls this with the current state
  * (number of items, current selected index, pressed key) and gets back the
  * next index to select, or null if the key should be ignored.
  *
- * design.md §16: "Keyboard navigation should be possible through table rows
+ *: "Keyboard navigation should be possible through table rows
  * and editable fields."
  *
  * Supported keys:
@@ -408,9 +408,9 @@ function sortKeys(value) {
  * When `currentIndex` is -1 (nothing selected yet), all four navigation keys
  * move to row 0 — the operator's first arrow press selects the first enquiry.
  *
- * @param {number} length       Total number of items in the queue.
+ * @param {number} length Total number of items in the queue.
  * @param {number} currentIndex Index of the currently-selected row, or -1.
- * @param {string} key          The KeyboardEvent.key value.
+ * @param {string} key The KeyboardEvent.key value.
  * @returns {number|null} Next index to select, or null when the key is not a
  *   navigation key or the queue is empty.
  */

@@ -1,10 +1,10 @@
 /**
- * PriorityBadge — Phase 5.
+ * PriorityBadge —.
  *
- * Renders the deterministic priority computed by the backend (Phase 4).
- * The frontend NEVER recomputes priority (Rules.md §9, Architechure.md §14).
+ * Renders the deterministic priority computed by the backend.
+ * The frontend NEVER recomputes priority,.
  *
- * design.md §10:
+ *:
  *   HIGH — strong accent marker
  *   MEDIUM — amber marker
  *   LOW — muted marker
@@ -43,7 +43,7 @@ export default function PriorityBadge({ priority, compact = false, showReasons =
   const level = priority.level;
   const label = LEVEL_LABEL[level] || level.toUpperCase();
 
-  // Visual treatment per design.md §10.
+  // Visual treatment .
   const railClass =
     level === 'high'
       ? 'bg-accent'

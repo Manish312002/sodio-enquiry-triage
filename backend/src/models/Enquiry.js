@@ -1,35 +1,35 @@
 /**
  * Enquiry Mongoose model.
  *
- * Schema source-of-truth: Architechure.md §6 ("Data Model — MongoDB").
+ * Schema source-of-truth: ("Data Model — MongoDB").
  *
- * Phase 1 scope:
+ * scope:
  *   - Only `originalText`, `source`, `sender`, `receivedAt`, `status`,
  *     `extractionState` are populated at create time.
  *   - `effectiveExtraction`, `humanOverrides`, `priority`, `batchId` are
  *     declared now (with safe defaults) so later phases do not require
  *     schema migrations.
  *
- * Phase 6 addition:
+ * addition:
  *   - `modelExtraction` is a parallel subdocument to `effectiveExtraction`
  *     that stores the LATEST SUCCESSFUL MODEL EXTRACTION, untouched by
  *     human overrides. When a human edits a field, the override is stored
  *     in `humanOverrides[field]`, the effective value is recomputed by
  *     merging `modelExtraction` + `humanOverrides` into `effectiveExtraction`,
  *     and priority is recalculated from the new effectiveExtraction.
- *   - For enquiries created before Phase 6 (no modelExtraction), the
+ *   - For enquiries created (no modelExtraction), the
  *     effective-value resolver lazily treats effectiveExtraction as the
  *     model source — so existing records continue to work without
  *     migration.
  *
- * Immutability rules enforced at the schema level (Rules.md §14):
+ * Immutability rules enforced at the schema level:
  *   - `originalText` is `select: true` but the service layer must refuse to
  *     overwrite it after creation. We also mark it `immutable` in Mongoose
  *     so any attempt to set it on update throws.
  *   - `receivedAt` is also `immutable` (source timestamp is preserved).
  *
- * No LLM extraction is performed in Phase 1. `extractionState` defaults to
- * `pending` so Phase 3 can pick the record up later.
+ * No LLM extraction is performed. `extractionState` defaults to
+ * `pending` so
  */
 import mongoose from 'mongoose';
 
@@ -93,11 +93,11 @@ const humanOverridesSchema = new Schema(
 
 // Human overrides are stored as Mixed so we can record "field X was edited to
 // value Y" (including `null`/deletion) versus "field X has never been edited".
-// The effective-value resolver in Phase 6 distinguishes these by checking
+// The effective-value resolver distinguishes these by checking
 // whether the override value is non-null (active) versus null/absent (no
 // override — fall back to modelExtraction).
 //
-// Override semantics (Phase 6):
+// Override semantics:
 //   humanOverrides[field] === null  → no active override (use modelExtraction)
 //   humanOverrides[field] !== null → active override (use this value)
 //
@@ -127,7 +127,7 @@ const enquirySchema = new Schema(
       index: true,
     },
 
-    // IMMUTABLE after creation (Rules.md §14).
+    // IMMUTABLE after creation.
     originalText: {
       type: String,
       required: true,
@@ -159,15 +159,15 @@ const enquirySchema = new Schema(
 
     isGenuineProjectEnquiry: { type: Schema.Types.Mixed, default: null },
 
-    // Phase 6 — preserved copy of the latest successful MODEL extraction.
+    // preserved copy of the latest successful MODEL extraction.
     // effectiveExtraction (below) is the MERGED value (model + human overrides)
     // and is what the scoring service reads. modelExtraction holds the
     // untouched model output so that:
     //   (a) clearing a human override can restore the model value, and
     //   (b) the UI can show "MODEL value" alongside "CONFIRMED value".
-    // For enquiries created before Phase 6, modelExtraction is null and the
+    // For enquiries created, modelExtraction is null and the
     // effective-value resolver lazily treats effectiveExtraction as the model
-    // source (which is correct because Phase 3 wrote model output directly
+    // source (which is correct because wrote model output directly
     // into effectiveExtraction).
     modelExtraction: {
       type: effectiveExtractionSchema,
@@ -205,14 +205,14 @@ const enquirySchema = new Schema(
   },
 );
 
-// --- indexes for the future console (Phase 5) ---
+// --- indexes for the future console ---
 // receivedAt is already queried often; compound with status for the queue.
 enquirySchema.index({ receivedAt: -1 });
 enquirySchema.index({ status: 1, receivedAt: -1 });
-// Phase 5: priority filter + sort
+// priority filter + sort
 enquirySchema.index({ 'priority.level': 1, receivedAt: -1 });
 enquirySchema.index({ 'priority.score': -1, receivedAt: -1 });
-// Phase 5: service-line filter
+// service-line filter
 enquirySchema.index({ 'effectiveExtraction.serviceLine': 1, receivedAt: -1 });
 
 /**
@@ -220,7 +220,7 @@ enquirySchema.index({ 'effectiveExtraction.serviceLine': 1, receivedAt: -1 });
  * Keeps _id (as a string), originalText, source, sender, receivedAt, status,
  * extractionState, priority, createdAt, updatedAt.
  *
- * Phase 1 only populates a subset; the response shape is stable so the
+ * only populates a subset; the response shape is stable so the
  * frontend contract does not change when later phases fill in extraction data.
  *
  * @param {import('mongoose').Document} doc

@@ -1,18 +1,18 @@
 /**
  * Enquiry service — repository boundary for the Enquiry collection.
  *
- * Architechure.md §14: "MongoDB access remains behind services/repositories/models."
+ * MongoDB access remains behind services/repositories/models.
  *
- * Phase 1 surface:
+ * Surface:
  *   - createEnquiry({ source, originalText, sender? }) -> saved enquiry
  *   - getEnquiryById(id) -> enquiry | null
- *   - listEnquiries({ limit }) -> [enquiry]  (basic; filters come in Phase 5)
+ *   - listEnquiries({ limit, filters?, sort? }) -> [enquiry]
  *
- * Phase 1 deliberately does NOT:
- *   - run extraction (Phase 3)
- *   - compute priority (Phase 4)
- *   - accept human overrides (Phase 6)
- *   - support re-extraction (Phase 7)
+ * Deliberately does NOT:
+ *   - run extraction
+ *   - compute priority
+ *   - accept human overrides
+ *   - support re-extraction
  *
  * Original text immutability is enforced at two layers:
  *   1. Mongoose schema marks `originalText` and `receivedAt` as `immutable`.
@@ -22,23 +22,22 @@ import Enquiry from '../models/Enquiry.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
 
-/** Phase 1 hard limit on originalText size. Generous; sample enquiries are <2KB. */
+/** Hard limit on originalText size. Generous; sample enquiries are <2KB. */
 export const MAX_ORIGINAL_TEXT_CHARS = 100_000;
 
 /**
- * Persist a new enquiry. Phase 1 only stores the immutable source data;
+ * Persist a new enquiry. Stores only the immutable source data;
  * `status` defaults to `new`, `extractionState` defaults to `pending`.
  *
- * Phase 2 extension: accepts an optional `receivedAt` Date so file imports
- * can preserve the source timestamp from the parsed `Received:` header
- * (Rules.md §14: "Source timestamp is preserved"). If omitted, defaults to
- * the current time (Phase 1 behaviour for paste).
+ * Accepts an optional `receivedAt` Date so file imports
+ * can preserve the source timestamp from the parsed `Received:` header.
+ * If omitted, defaults to the current time (paste behaviour).
  *
  * @param {object} input
  * @param {'paste'|'file'} input.source
- * @param {string} input.originalText  Verbatim; never trimmed.
+ * @param {string} input.originalText Verbatim; never trimmed.
  * @param {{name?: string, email?: string}} [input.sender]
- * @param {Date} [input.receivedAt]  Optional source timestamp (Phase 2).
+ * @param {Date} [input.receivedAt]  Optional source timestamp.
  * @returns {Promise<import('../models/Enquiry.js').default>}
  */
 export async function createEnquiry({ source, originalText, sender, receivedAt } = {}) {
@@ -58,7 +57,7 @@ export async function createEnquiry({ source, originalText, sender, receivedAt }
     });
   }
 
-  // We intentionally do NOT trim or normalise originalText (Rules.md §14).
+  // We intentionally do NOT trim or normalise originalText.
   // Empty/whitespace-only content is rejected with a readable message.
   if (originalText.length === 0 || originalText.trim().length === 0) {
     throw new AppError({
@@ -76,8 +75,8 @@ export async function createEnquiry({ source, originalText, sender, receivedAt }
     });
   }
 
-  // Sender is optional for Phase 1 (the paste UI does not require it).
-  // Phase 2 file imports may yield sender values like "n/a" or empty
+  // Sender is optional (the paste UI does not require it).
+  // file imports may yield sender values like "n/a" or empty
   // strings when the source file has no real email for a block.
   const senderDoc =
     sender && typeof sender === 'object'
@@ -91,11 +90,11 @@ export async function createEnquiry({ source, originalText, sender, receivedAt }
   //
   // Source-aware handling:
   //   - source='paste': strict. Reject with 400 INVALID_SENDER_EMAIL.
-  //     Phase 1's paste UI explicitly validates this; a bad email here is
+  //'s paste UI explicitly validates this; a bad email here is
   //     a real user error.
   //   - source='file': tolerant. The source file may contain placeholders
   //     like "n/a" (see Vish's contact-form enquiry in the sample fixture).
-  //     Rather than crashing the whole import (Rules.md §12: one failed
+  //     Rather than crashing the whole import: one failed
   //     item must not crash the whole batch), we downgrade the email to
   //     null and log a warning. The original raw value is preserved in
   //     originalText, so no information is lost.
@@ -114,8 +113,8 @@ export async function createEnquiry({ source, originalText, sender, receivedAt }
     senderDoc.email = null;
   }
 
-  // receivedAt: Phase 2 file imports pass the parsed source timestamp.
-  // Phase 1 paste omits it, so we default to now. We validate that it's a
+  // receivedAt: file imports pass the parsed source timestamp.
+  // paste omits it, so we default to now. We validate that it's a
   // real Date — if a caller passes a string, we coerce; if invalid, we
   // fall back to now (defensive — never crash the import over a bad date).
   let finalReceivedAt;
@@ -186,7 +185,7 @@ export async function getEnquiryById(id) {
 /**
  * List recent enquiries with optional filters + sorting.
  *
- * Phase 5 adds the filters required by FR-05 / Rules.md §9:
+ * md §9:
  *   - serviceLine: 'all' | 'ai' | 'blockchain' | 'web' | 'mobile' | 'game' | 'other'
  *   - priority:    'all' | 'high' | 'medium' | 'low'
  *   - status:      'all' | 'new' | 'contacted' | 'qualified' | 'dropped'
@@ -246,7 +245,7 @@ export async function listEnquiries({
   }
 
   // Sort key. Priority sort uses priority.score so the order is high → med → low.
-  // receivedAt sort uses the immutable source timestamp (Rules.md §14).
+  // receivedAt sort uses the immutable source timestamp.
   const SORT_KEYS = ['priority', 'receivedAt'];
   const safeSort = SORT_KEYS.includes(sort) ? sort : 'receivedAt';
   const safeDir = dir === 'asc' ? 1 : -1;
@@ -265,10 +264,10 @@ export async function listEnquiries({
 /**
  * Update the workflow status of an existing enquiry.
  *
- * Phase 5 — implements FR-08 "Status workflow":
+ * implements FR-08 "Status workflow":
  *   new → contacted → qualified → dropped
  *
- * Rules.md §14: "Status changes are validated against allowed statuses."
+ *: "Status changes are validated against allowed statuses."
  * We do NOT enforce the linear order — the operator may move an enquiry
  * directly from 'new' to 'dropped' (e.g. obvious spam) or revert from
  * 'qualified' back to 'contacted'. The four enum values are the only
@@ -276,13 +275,13 @@ export async function listEnquiries({
  *
  * This function does NOT touch:
  *   - originalText / receivedAt (immutable, enforced at schema level)
- *   - effectiveExtraction (Phase 6 owns field edits)
- *   - humanOverrides (Phase 6 owns human corrections)
+ *   - effectiveExtraction (
+ *   - humanOverrides (
  *   - priority (status is independent of priority score)
  *   - extractionState (extraction is a separate concern)
  *
  * @param {string} id
- * @param {string} status  Must be one of: new, contacted, qualified, dropped.
+ * @param {string} status Must be one of: new, contacted, qualified, dropped.
  * @returns {Promise<import('../models/Enquiry.js').default>}  The updated enquiry.
  * @throws {AppError} 400 if id is invalid or status is not in the allowed enum.
  * @throws {AppError} 404 if enquiry not found.

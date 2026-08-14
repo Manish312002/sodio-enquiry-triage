@@ -5,17 +5,16 @@ This file records concrete mistakes made by the LLM-assisted build
 the coding-assistant LLM used to scaffold this repository) and the
 developer's response to each.
 
-The task brief (`Docs/Rules.md` §15) explicitly requires that
-"meaningful AI mistakes" be recorded in this file. Trivial mistakes
+Only mistakes that influenced the shipped design or that required
+non-trivial developer intervention are recorded here. Trivial mistakes
 (typos, missing imports caught by the linter on first run, etc.) are
-not recorded here — only mistakes that influenced the shipped design
-or that required non-trivial developer intervention.
+not recorded.
 
 ---
 
 ## Mistake #1 — Live Grok output emitted snake_case + `null` budget/timeline, breaking the Zod contract
 
-**When:** surfaced during live verification after Phase 3 SDK migration
+**When:** surfaced during live verification after the SDK migration
 (commit `410145c`); fix shipped as commit `071f793` ("fix(extraction):
 enforce ONE canonical contract across prompt + provider + Zod").
 
@@ -32,7 +31,7 @@ observed:
    `.strict()` so unknown keys are rejected — every extraction
    failed validation and was classified `INVALID_OUTPUT` with
    `recoverable=false` (Gemini fallback NOT called).
-2. **`budget: null` and `timeline: null`.** Rules.md §6 / §7 require
+2. **`budget: null` and `timeline: null`.** The contract requires
    `budget` and `timeline` to be structured objects
    (`{raw, currency, min, max, qualifier}` /
    `{raw, normalized}`) with the unknown-representation values
@@ -44,12 +43,12 @@ observed:
    free-formed the field names and shapes based on its own
    preferences.
 
-**Why it slipped through Phase 3:**
+**Why it slipped through:**
 
-Phase 3 wrote the prompt with prose field descriptions and used
-generic `json_object` mode for the provider request. The Zod schema
-was the only canonical contract. Phase 3 tests used a mocked LLM
-HTTP server that returned camelCase compliant output, so the
+The prompt was originally written with prose field descriptions and
+used generic `json_object` mode for the provider request. The Zod
+schema was the only canonical contract. The unit tests used a mocked
+LLM HTTP server that returned camelCase compliant output, so the
 mismatch between prompt-prose, provider-request, and Zod was not
 visible until a real Groq call was made.
 
@@ -75,21 +74,20 @@ Layered a single canonical contract across three layers (commit
 - **Layer 3 — Zod** (`extractionSchema.js`): UNCHANGED. Still
   `.strict()`, no `.passthrough()`, no `.catchall()`, no accepting
   `null` where the contract requires an object. Zod remains the
-  authoritative post-response validator (defence in depth per
-  Rules.md §5).
+  authoritative post-response validator (defence in depth).
 
 Why `strict: false` (not `strict: true`) on the JSON Schema:
 OpenAI Structured Outputs `strict: true` mode requires
 `additionalProperties: false` on every object schema and forces
 every property into `required`. Our `timeline.normalized` field is
-intentionally open-shaped per Rules.md §7 ("Open shape for
-normalized markers — filled opportunistically without ever
-inventing dates"). Forcing it into a closed object would either
-over-constrain the model into emitting placeholder values for keys
-that don't apply, or reject legitimate extractions when the model
-emits an unanticipated marker key. Therefore `strict: false` is
-used; the model receives the full canonical schema as guidance,
-and Zod remains the authoritative validation boundary.
+intentionally open-shaped ("Open shape for normalized markers —
+filled opportunistically without ever inventing dates"). Forcing it
+into a closed object would either over-constrain the model into
+emitting placeholder values for keys that don't apply, or reject
+legitimate extractions when the model emits an unanticipated marker
+key. Therefore `strict: false` is used; the model receives the full
+canonical schema as guidance, and Zod remains the authoritative
+validation boundary.
 
 **Tests added (25 new, 0 regressions):**
 
@@ -124,16 +122,15 @@ Schema prevents the drift in the first place.
 
 ## Mistake #2 — The LLM hallucinated a company name from a vague "call me" message
 
-**When:** surfaced during Phase 6 effective-value-resolver design
-(decision #3 in `Docs/memory.md` Phase 6 → "Override semantics: null =
-no override, non-null = active").
+**When:** surfaced during effective-value-resolver design (decision:
+"Override semantics: null = no override, non-null = active").
 
 **What the model did:**
 
 One of the sample enquiries is a vague "Hi, saw your website, call me
 at 555-1234 — John" message with no company name in the text. The
 model emitted `company: "John's Company"` — a plausible-sounding but
-fabricated value with no basis in the source text. Rules.md §5
+fabricated value with no basis in the source text. The contract
 explicitly says "Unknown values must remain unknown/null. Do not
 hallucinate."
 
@@ -180,8 +177,8 @@ this explicitly:
   appear in `humanOverrides`.
 
 **Lesson:** When the LLM is the extractor (not the authority), every
-field needs an "I disagree" path that includes "I want this field
-to be empty / false / zero" — not just "I want to replace it with a
+field needs an "I disagree" path that includes "I want this field to
+be empty / false / zero" — not just "I want to replace it with a
 different value". The `null`-vs-non-null distinction is the
 cleanest way to express this without a separate "cleared" marker
 field per override.
@@ -190,7 +187,7 @@ field per override.
 
 ## Mistake #3 — The coding-assistant LLM generated an EXTRACTED panel that overflowed vertically and clipped long values
 
-**When:** surfaced during Phase 8 responsive-layout verification
+**When:** surfaced during responsive-layout verification
 (screenshots revealed the EXTRACTED panel was taller than the
 viewport and long budget / summary values were truncated with no
 way to read them); fix shipped as commit `96ddc65` ("fix(ui): make
@@ -200,15 +197,15 @@ shrink-0 so detail grid keeps full viewport height").
 
 **What the model did:**
 
-The Phase 5 detail-view layout used a CSS grid where the DETAIL
-column had no explicit height constraint. The EXTRACTED panel inside
-it grew to its natural content height; if the content was taller
-than the viewport, the panel overflowed the page (the page itself
-scrolled, not the panel). Worse, `InlineField` value spans used
-`truncate` (Tailwind's `overflow-hidden text-ellipsis whitespace-nowrap`)
-so long budget strings like `"£400,000 – £600,000 over 6 months,
-paid in tranches"` were clipped mid-character with no way to read
-the full value.
+The detail-view layout used a CSS grid where the DETAIL column had
+no explicit height constraint. The EXTRACTED panel inside it grew
+to its natural content height; if the content was taller than the
+viewport, the panel overflowed the page (the page itself scrolled,
+not the panel). Worse, `InlineField` value spans used `truncate`
+(Tailwind's `overflow-hidden text-ellipsis whitespace-nowrap`) so
+long budget strings like `"£400,000 – £600,000 over 6 months, paid
+in tranches"` were clipped mid-character with no way to read the
+full value.
 
 The model's layout reasoning was correct in isolation (use a CSS
 grid, let columns size to content), but it didn't account for the
@@ -216,9 +213,9 @@ combined height of STATUS + SOURCE + EXTRACTED + PRIORITY stacked
 inside the DETAIL column at typical viewport heights, and it didn't
 think about long values inside `InlineField` rows.
 
-**Why it slipped through Phase 5:**
+**Why it slipped through:**
 
-Phase 5 had only short-field sample data in the dev server (the
+The dev server initially had only short-field sample data (the
 operator hadn't yet uploaded the real `sample-enquiries.txt` with
 its genuinely long budget / summary strings). The pure-logic
 frontend tests don't render components, so the visual overflow was
@@ -249,19 +246,18 @@ invisible to the test suite.
   instead of being squeezed by the intake panel's natural height.
 
 **Lesson:** Pure-logic frontend tests are not enough for visual layout
-correctness. The Phase 6 decision to skip `@testing-library/react`
-+ jsdom was a reasonable cost-saving at the time, but it left a
-class of bugs (CSS height / overflow interactions) that only a
-rendering test or a manual screenshot could catch. See
-`SELF-REVIEW.md` finding #2.
+correctness. The decision to skip `@testing-library/react` + jsdom
+was a reasonable cost-saving at the time, but it left a class of
+bugs (CSS height / overflow interactions) that only a rendering test
+or a manual screenshot could catch. See `SELF-REVIEW.md` finding #2.
 
 ---
 
 ## Mistake #4 — The model tried to emit a `priority` field, twice
 
-**When:** surfaced during Phase 3 (extraction prompt first written)
-and re-surfaced during the Phase 9 prompt-injection audit. Caught
-both times by the schema layer before any priority was persisted.
+**When:** surfaced when the extraction prompt was first written and
+re-surfaced during the prompt-injection audit. Caught both times by
+the schema layer before any priority was persisted.
 
 **What the model did:**
 
@@ -273,10 +269,10 @@ it was `"priority": {"level": "high", "score": 9, "reasons":
 [...]}` — a more elaborate structure that looked plausible but
 violated the same rule.
 
-Rules.md §3 is explicit: "The LLM is an extractor, not an
-authority. The model may NOT calculate authoritative priority."
-Rules.md §9 reinforces: "Priority is calculated from effective
-structured fields."
+The contract is explicit: "The LLM is an extractor, not an
+authority. The model may NOT calculate authoritative priority." It
+reinforces: "Priority is calculated from effective structured
+fields."
 
 **Why it matters:**
 
@@ -317,42 +313,41 @@ just by prompt language.
 
 ---
 
-## Mistake #5 — Multiple subtle UX gaps left by the coding-assistant LLM across Phases 5–8
+## Mistake #5 — Multiple subtle UX gaps left by the coding-assistant LLM across the build
 
-**When:** surfaced during the Phase 10 UX polish audit (commit
-`387fa15`). Several smaller AI-generated UX decisions needed
-correction; they are bundled here because they share a root cause.
+**When:** surfaced during the UX polish audit (commit `387fa15`).
+Several smaller AI-generated UX decisions needed correction; they
+are bundled here because they share a root cause.
 
 **What the model did (or didn't do):**
 
 1. **Queue rows had no ArrowUp / ArrowDown / Home / End keyboard
    navigation.** Rows were `<button>` elements (so focusable), but
    the only way to move between them was Tab, which is linear and
-   doesn't skip the action buttons inside each row. design.md §16
+   doesn't skip the action buttons inside each row. The design spec
    explicitly requires "Keyboard navigation through table rows and
    editable fields". The model implemented focusability but not
    navigation.
-2. **Confirmed fields had only an accent left border.** design.md
-   §8 says "no dramatic colour fill" but a subtle background tint
+2. **Confirmed fields had only an accent left border.** The design
+   spec says "no dramatic colour fill" but a subtle background tint
    is appropriate to make confirmed fields pop when scanning. The
    model interpreted "no dramatic colour fill" as "no background
    fill at all", which made confirmed fields visually identical to
    model fields at a glance.
 3. **SOURCE label was `text-ink-muted`** (same as other section
-   headers). Phase 10 acceptance criterion #2 says "original text
-   remains visually prominent" — the SOURCE panel should read as
-   the authoritative evidence surface, not just another section
-   header.
+   headers). The acceptance criterion says "original text remains
+   visually prominent" — the SOURCE panel should read as the
+   authoritative evidence surface, not just another section header.
 4. **Queue skeleton was 4 rows of 2 lines each;** detail skeleton
    was 3 lines. Neither matched the real row / panel structure.
-   design.md §14 says "skeleton rows that preserve the table
+   The design spec says "skeleton rows that preserve the table
    structure". The model used a generic skeleton shape instead of
    mirroring the actual content layout.
 5. **`BatchProgress` importing state was a single `animate-pulse`
    text line.** No progress shape was visible during the upload +
    parse phase. The model treated "importing" as a single transient
    state rather than a multi-segment progress affordance.
-6. **`transition-colors` had no explicit duration.** design.md §18
+6. **`transition-colors` had no explicit duration.** The design spec
    says "120–180ms transitions". The model used Tailwind's default
    `transition-colors` (which is 150ms in v3 but not guaranteed
    across versions). Acceptable, but not explicit.
@@ -360,10 +355,9 @@ correction; they are bundled here because they share a root cause.
 **Why these slipped through:**
 
 Each individual decision was defensible in isolation. The model
-correctly cited the design doc; it just consistently chose the
+correctly cited the design spec; it just consistently chose the
 more conservative interpretation. The cumulative effect was a UI
-that worked but didn't fully deliver on the design system's
-intent.
+that worked but didn't fully deliver on the design system's intent.
 
 **Developer response (commit `387fa15`):**
 
@@ -391,18 +385,18 @@ intent.
 **Lesson:** AI-generated UI code tends to under-deliver on visual
 hierarchy. The model reads "restrained" or "no dramatic" and
 interprets it as "minimum viable". A human reviewer with the design
-doc open must explicitly demand the intended emphasis (label
+spec open must explicitly demand the intended emphasis (label
 strength, background tint, skeleton fidelity). This is most
-efficient as a single dedicated polish pass (Phase 10) rather than
-catching each gap piecemeal during the build phases.
+efficient as a single dedicated polish pass rather than catching
+each gap piecemeal during the build.
 
 ---
 
 ## Mistake #6 — Test-assertion bugs (twice)
 
-**When:** Phase 2 parser tests (first run: 17/19 passed — two
-"failures" were test bugs, not parser bugs); Phase 3 unit tests
-(three test bugs in the first run).
+**When:** Parser tests (first run: 17/19 passed — two "failures"
+were test bugs, not parser bugs); unit tests for the extraction
+layer (three test bugs in the first run).
 
 **What the model did:**
 
@@ -410,36 +404,37 @@ When the coding-assistant LLM wrote tests, it sometimes asserted
 against an incorrect API contract or used the wrong assertion
 shape. Examples:
 
-- Phase 2: asserted that `sender.email` was strictly validated for
-  file-imported enquiries. The parser actually needs to tolerate
+- Parser tests: asserted that `sender.email` was strictly validated
+  for file-imported enquiries. The parser actually needs to tolerate
   missing / malformed sender emails in file imports (the sample
   file has blocks with no `From:` line at all). The parser was
   correct; the test assertion was wrong.
-- Phase 3: asserted zod's `unrecognized_keys` error was at
-  `error.path` — actually it's at `error.keys` in zod 3.x. The
-  schema was correct; the test used the wrong assertion property.
-- Phase 3: asserted a mock method's return shape that didn't match
-  how `vitest` mocks actually return values. The implementation
-  was correct; the mock setup was wrong.
-- Phase 3: URL-encoded a fixture path that didn't need encoding.
-  The fixture loading was correct; the test over-engineered the
-  path.
+- Extraction unit tests: asserted zod's `unrecognized_keys` error
+  was at `error.path` — actually it's at `error.keys` in zod 3.x.
+  The schema was correct; the test used the wrong assertion
+  property.
+- Extraction unit tests: asserted a mock method's return shape that
+  didn't match how `vitest` mocks actually return values. The
+  implementation was correct; the mock setup was wrong.
+- Extraction unit tests: URL-encoded a fixture path that didn't
+  need encoding. The fixture loading was correct; the test
+  over-engineered the path.
 
 **Developer response:**
 
-- Phase 2: made `sender.email` validation source-aware (strict for
-  paste, tolerant for file). Re-tested: 20/20 persisted.
-- Phase 3: fixed 3 test bugs (zod `unrecognized_keys` uses `keys`
-  not `path`; mock.method return shape; fixture path
-  URL-encoding). Final: 85/85 unit tests pass.
+- Made `sender.email` validation source-aware (strict for paste,
+  tolerant for file). Re-tested: 20/20 persisted.
+- Fixed 3 test bugs (zod `unrecognized_keys` uses `keys` not
+  `path`; mock.method return shape; fixture path URL-encoding).
+  Final: 85/85 unit tests pass.
 
 **Lesson:** When a test fails, the first question is "is the test
 right?" not "is the code wrong?". AI-generated tests inherit the
 model's assumptions about the API contract — if the model's mental
-model of the contract is slightly off, the test will assert
-against the wrong shape and the implementation will look broken.
-Always cross-reference the test assertion against the actual
-source-of-truth (the schema, the controller, the design doc)
+model of the contract is slightly off, the test will assert against
+the wrong shape and the implementation will look broken. Always
+cross-reference the test assertion against the actual
+source-of-truth (the schema, the controller, the design spec)
 before "fixing" the implementation to match a failing test.
 
 ---
@@ -452,15 +447,14 @@ six:
 | # | Mistake | Layer caught | Layer fixed |
 |---|---|---|---|
 | 1 | snake_case + null budget/timeline | Live LLM call (post-deploy) | Canonical contract across 3 layers |
-| 2 | Hallucinated company name | Phase 6 effective-value design | Override semantics (null vs non-null) |
-| 3 | EXTRACTED panel overflow + clipped values | Phase 8 screenshots | CSS height/overflow + `break-words` |
+| 2 | Hallucinated company name | Effective-value design | Override semantics (null vs non-null) |
+| 3 | EXTRACTED panel overflow + clipped values | Screenshots | CSS height/overflow + `break-words` |
 | 4 | Model emitted `priority` field | Schema layer (immediate) | Four-layer priority guard |
-| 5 | Subtle UX gaps across Phases 5–8 | Phase 10 polish audit | Dedicated UX polish pass |
+| 5 | Subtle UX gaps across the build | Polish audit | Dedicated UX polish pass |
 | 6 | Test-assertion bugs (twice) | Test failure (first run) | Cross-reference assertion vs source-of-truth |
 
-The task brief (`Docs/Rules.md` §15) requires "record meaningful AI
-mistakes". The bar I applied: a mistake is "meaningful" if it
-influenced the shipped design (Mistake #1, #2, #4, #5) or if it
-required non-trivial developer intervention to diagnose (Mistake #3,
-#6). Trivial mistakes (typos, missing imports, lint warnings caught
-on first run) are not recorded.
+The bar applied: a mistake is "meaningful" if it influenced the
+shipped design (Mistake #1, #2, #4, #5) or if it required
+non-trivial developer intervention to diagnose (Mistake #3, #6).
+Trivial mistakes (typos, missing imports, lint warnings caught on
+first run) are not recorded.

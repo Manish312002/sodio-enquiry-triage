@@ -1,8 +1,8 @@
 /**
  * Redux store.
  *
- * Phase 0: only the `enquiries` slice is registered (with the fetchHealth
- * thunk). Architechure.md §11 specifies the eventual shape; we add fields
+ *: only the `enquiries` slice is registered (with the fetchHealth
+ * thunk). specifies the eventual shape; we add fields
  * to the slice and register new slices as later phases require.
  */
 import { configureStore } from '@reduxjs/toolkit';

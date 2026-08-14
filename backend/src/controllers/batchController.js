@@ -1,25 +1,25 @@
 /**
- * Batch controller — Phase 8 HTTP endpoints for batch progress + status.
+ * Batch controller — HTTP endpoints for batch progress + status.
  *
- * Architechure.md §8 API surface (Batch):
+ * API surface (Batch):
  *   GET /api/batches/:id   → fetch one batch (progress + counters + failures)
  *
- * Phase 8 adds:
+ * adds:
  *   GET /api/batches/:id   → batchController.getBatch
  *   POST /api/batches/:id/refresh → batchController.refreshBatch
  *
  * The import endpoint (POST /api/enquiries/import) creates the BatchJob and
  * kicks off runBatchExtraction; that controller lives in enquiryController.js
- * because the route is mounted under /api/enquiries (per Architechure.md §8).
+ * because the route is mounted under /api/enquiries ( ).
  *
  * Per-item retry does NOT need a new endpoint: the existing
  *   POST /api/enquiries/:id/re-extract
- * (Phase 7) already does exactly what's needed — it runs a new extraction
+ * already does exactly what's needed — it runs a new extraction
  * attempt, preserves all existing data on failure, and recalculates priority
  * on success. The frontend dispatches reExtractEnquiry for the failed
  * enquiry, then re-fetches the batch to see the updated counters.
  *
- * Security (Rules.md §12, Architechure.md §14):
+ * Security,:
  *   - The client cannot specify arbitrary LLM providers or models.
  *   - The client cannot set priority, modify originalText, or fabricate
  *     extraction results.

@@ -1,23 +1,23 @@
 /**
- * ExtractionPanel — Phase 5 + Phase 6 + Phase 7.
+ * ExtractionPanel — + +.
  *
  * Renders the EXTRACTED block on the right side of the detail view
- * (design.md §7). Handles all extraction states explicitly:
+ *. Handles all extraction states explicitly:
  *
  *   - extractionState === 'pending'    → "EXTRACTION PENDING" placeholder
  *   - extractionState === 'processing' → "EXTRACTING…" placeholder
  *   - extractionState === 'failed'     → "EXTRACTION FAILED" + retry CTA
- *                                         (Phase 7 adds a Re-extract button)
+ *                                         (
  *   - extractionState === 'completed'  → field-by-field render of the
  *                                         effectiveExtraction subdocument.
  *
- * Phase 6 — inline editing:
+ * inline editing:
  *   - Each extracted field is rendered via the InlineField component,
  *     which shows a MODEL chip (when no override is active) or a
  *     CONFIRMED chip + accent left border (when an override is active).
  *   - The operator can edit any of the 8 OVERRIDEABLE_FIELDS.
  *
- * Phase 7 — re-extraction safety:
+ * re-extraction safety:
  *   - A "Re-extract" button is shown at the top of the panel. Clicking it
  *     dispatches the reExtractEnquiry thunk, which POSTs to
  *     /api/enquiries/:id/re-extract.
@@ -32,7 +32,7 @@
  * SECURITY: original enquiry text and extracted values are all rendered
  * via React's default text escaping. No dangerouslySetInnerHTML.
  * originalText is NEVER editable through this panel (it's in the SOURCE
- * panel and is immutable per Rules.md §14).
+ * panel and is immutable ).
  */
 import { useDispatch, useSelector } from 'react-redux';
 import PriorityBadge from '../PriorityBadge/PriorityBadge';
@@ -42,13 +42,13 @@ import { clearReExtractState } from '../../features/enquiries/enquirySlice';
 
 /**
  * @param {object} props
- * @param {object} props.enquiry  Enquiry response shape (see backend toApiResponse).
+ * @param {object} props.enquiry Enquiry response shape (see backend toApiResponse).
  */
 export default function ExtractionPanel({ enquiry }) {
   const dispatch = useDispatch();
   const state = enquiry?.extractionState;
 
-  // Phase 7 — re-extraction lifecycle state.
+  // re-extraction lifecycle state.
   const reExtractStatus = useSelector((s) => s.enquiries.reExtractStatus);
   const reExtractError = useSelector((s) => s.enquiries.reExtractError);
   const reExtractId = useSelector((s) => s.enquiries.reExtractId);
@@ -79,7 +79,7 @@ export default function ExtractionPanel({ enquiry }) {
 
   // --- States ---
 
-  // Phase 7 — during re-extraction, show the processing state REGARDLESS
+  // during re-extraction, show the processing state REGARDLESS
   // of the enquiry's extractionState (which transitions to 'processing'
   // server-side, but we want the UI to reflect the re-extract intent).
   if (isReExtracting) {
@@ -165,7 +165,7 @@ export default function ExtractionPanel({ enquiry }) {
   return (
     <div className="space-y-4">
       <Section title="EXTRACTED">
-        {/* Phase 7 — Re-extract button + status indicators */}
+        {/* Re-extract button + status indicators */}
         <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
           <p className="font-mono text-micro text-ink-muted tracking-widest">
             Edit any field to apply a human override. Priority recalculates automatically.
@@ -181,7 +181,7 @@ export default function ExtractionPanel({ enquiry }) {
           </button>
         </div>
 
-        {/* Phase 7 — re-extraction error (inline, dismissible) */}
+        {/* re-extraction error (inline, dismissible) */}
         {reExtractFailed && reExtractError && (
           <div className="mb-3 border border-danger/50 bg-danger-soft/40 p-2 flex items-start justify-between gap-2">
             <p className="font-mono text-micro text-danger">
@@ -201,7 +201,7 @@ export default function ExtractionPanel({ enquiry }) {
           </div>
         )}
 
-        {/* Phase 7 — NEW MODEL AVAILABLE indicator (when re-extraction
+        {/* NEW MODEL AVAILABLE indicator (when re-extraction
             succeeded with no conflicts, the new model values silently
             became effective for non-overridden fields) */}
         {reExtractStatus === 'succeeded' && reExtractConflicts.length === 0 && (
@@ -217,7 +217,7 @@ export default function ExtractionPanel({ enquiry }) {
           </div>
         )}
 
-        {/* Phase 7 — conflict summary (when re-extraction succeeded with conflicts) */}
+        {/* conflict summary (when re-extraction succeeded with conflicts) */}
         {reExtractSucceeded && (
           <div className="mb-3 border border-warning/60 bg-warning-soft/40 p-2">
             <p className="font-mono text-micro text-warning tracking-widest">
@@ -243,7 +243,7 @@ export default function ExtractionPanel({ enquiry }) {
           <InlineField enquiry={enquiry} field="isGenuineProjectEnquiry" label="GENUINE PROJECT ENQUIRY" />
         </dl>
 
-        {/* projectCount + additionalProjectNote are NOT overrideable (Phase 6 boundary).
+        {/* projectCount + additionalProjectNote are NOT overrideable.
             They remain model-only display fields. */}
         {enquiry.effectiveExtraction.projectCount != null &&
           enquiry.effectiveExtraction.projectCount > 1 && (

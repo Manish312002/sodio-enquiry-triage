@@ -1,11 +1,11 @@
 /**
- * Groq provider — PRIMARY LLM adapter (Phase 3, SDK-based).
+ * Groq provider — PRIMARY LLM adapter.
  *
  * Uses the official `openai` npm package pointed at Groq's OpenAI-compatible
  * endpoint. The `client.responses.create()` API is used per the operator
  * specification (verified to exist in `openai@7.4.0`).
  *
- * Architechure.md §5 (provider rules):
+ * (provider rules):
  *   1. Groq is attempted first.
  *   2. If Groq fails because of a recoverable provider/API failure, Gemini
  *      is attempted.
@@ -15,7 +15,7 @@
  *   5. Provider API keys remain server-side.
  *   6. Provider SDK details are isolated inside this file.
  *
- * Error classification (Rules.md §3 — "distinguish provider/API failure
+ * Error classification — "distinguish provider/API failure
  * from malformed model output"):
  *   - NOT_CONFIGURED         : empty API key → recoverable (try next provider)
  *   - PROVIDER_NETWORK_ERROR : SDK threw a connection error → recoverable
@@ -27,7 +27,7 @@
  *   - INVALID_OUTPUT         : response parsed as JSON but failed schema
  *                              validation OR was not valid JSON → NOT recoverable
  *                              (model quality issue, not provider availability;
- *                              do NOT fall back per Rules.md §3)
+ *                              do NOT fall back )
  *
  * SECURITY:
  *   - API key is read from env at call time, never logged, never returned to
@@ -204,7 +204,7 @@ export async function extract(enquiryText) {
     try {
       // Use the Responses API per the operator specification.
       // `instructions` is the trusted system prompt (separate from user
-      // input — preserves the prompt-injection boundary, Rules.md §4).
+      // input — preserves the prompt-injection boundary,.
       // `input` is the user message that wraps the untrusted enquiry in
       // a literal data fence (see extractionPrompt.buildUserMessage).
       //
@@ -218,7 +218,7 @@ export async function extract(enquiryText) {
       // `strict:false` is intentional: OpenAI strict mode requires
       // `additionalProperties:false` on every object, but our
       // `timeline.normalized` field is intentionally open-shaped
-      // (Rules.md §7 — opportunistic urgency/duration/period markers).
+      // — opportunistic urgency/duration/period markers).
       // See extractionJsonSchema.js header for the full rationale.
       const response = await client.responses.create({
         model: env.GROQ_MODEL,

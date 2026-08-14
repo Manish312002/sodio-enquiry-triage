@@ -6,12 +6,12 @@
  *   - getDbStatus()       -> 'connected' | 'connecting' | 'disconnected' | 'error'
  *   - getConnectionHost() -> string (for health endpoint reporting)
  *
- * Phase 0 behaviour:
+ * behaviour:
  *   - connectDb() is called once during server bootstrap.
  *   - If MongoDB is unreachable, the server STILL starts (so the operator can
  *     hit /api/health and see the failure), but every collection operation
  *     will fail loudly at call-time. This is intentional: hiding a DB outage
- *     behind a false "connected" status would violate Phase 0 acceptance.
+ *     behind a false "connected" status would violate acceptance.
  */
 import mongoose from 'mongoose';
 import { env } from './env.js';

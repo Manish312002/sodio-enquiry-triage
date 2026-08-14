@@ -1,14 +1,11 @@
 /**
  * Shared domain constants.
  *
- * Source-of-truth: Rules.md §5 (extraction schema), §8 (genuine enquiry),
- * §9 (priority thresholds), PRD.md §5 FR-08 (status workflow).
- *
- * IMPORTANT: priority thresholds and scoring rules live in scoringService.js
- * (Phase 4). This file only holds enumerated values used by multiple modules.
+ * IMPORTANT: priority thresholds and scoring rules live in scoringService.js.
+ * This file only holds enumerated values used by multiple modules.
  */
 
-/** Allowed service lines (Rules.md §5). */
+/** Allowed service lines. */
 export const SERVICE_LINES = Object.freeze([
   'ai',
   'blockchain',
@@ -18,13 +15,13 @@ export const SERVICE_LINES = Object.freeze([
   'other',
 ]);
 
-/** Allowed enquiry statuses (PRD.md §5 FR-08). */
+/** Allowed enquiry statuses. */
 export const STATUSES = Object.freeze(['new', 'contacted', 'qualified', 'dropped']);
 
-/** Allowed priority levels (Rules.md §9). */
+/** Allowed priority levels. */
 export const PRIORITIES = Object.freeze(['high', 'medium', 'low']);
 
-/** Allowed extraction states (Architechure.md §6). */
+/** Allowed extraction states. */
 export const EXTRACTION_STATES = Object.freeze([
   'pending',
   'processing',
@@ -32,7 +29,7 @@ export const EXTRACTION_STATES = Object.freeze([
   'failed',
 ]);
 
-/** Allowed budget qualifiers (Rules.md §6). */
+/** Allowed budget qualifiers. */
 export const BUDGET_QUALIFIERS = Object.freeze([
   'exact',
   'range',
@@ -41,7 +38,7 @@ export const BUDGET_QUALIFIERS = Object.freeze([
   'unknown',
 ]);
 
-/** Allowed batch job statuses (Architechure.md §6). */
+/** Allowed batch job statuses. */
 export const BATCH_STATUSES = Object.freeze([
   'processing',
   'completed',

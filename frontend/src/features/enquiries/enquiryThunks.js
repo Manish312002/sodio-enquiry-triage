@@ -1,18 +1,18 @@
 /**
  * Enquiry thunks (createAsyncThunk).
  *
- * Phase 1 surface:
+ * surface:
  *   - createEnquiry({ originalText, sender? })  -> POST /api/enquiries
  *   - fetchEnquiry(id)                          -> GET  /api/enquiries/:id
  *   - fetchEnquiries({ limit? })                -> GET  /api/enquiries
  *
- * Phase 5 additions:
+ * additions:
  *   - fetchEnquiries({ serviceLine, priority, status, sort, dir, limit })
  *       — query params are now passed to GET /api/enquiries (the backend
  *         applies the filters + sort server-side).
  *   - updateEnquiryStatus({ id, status })       -> PATCH /api/enquiries/:id/status
  *
- * Phase 6 additions:
+ * additions:
  *   - updateEnquiryField({ id, field, value })  -> PATCH /api/enquiries/:id/fields/:field
  *       Applies a human override to a single extracted field. Pass
  *       `value: null` to clear the override (fall back to model extraction).
@@ -23,14 +23,14 @@
  *       Convenience wrapper for updateEnquiryField with value=null. The
  *       intent is more readable at the call site.
  *
- * `fetchHealth` from Phase 0 is kept for the connectivity indicator.
+ * `fetchHealth` is kept for the connectivity indicator.
  *
- * Architectural rules (Architechure.md §14):
+ * Architectural rules:
  *   - No LLM calls from React — only REST.
  *   - No secrets in thunks.
  *   - LLM provider keys never live here; they are server-side only.
  *   - Priority is NEVER set directly by the client — it is always derived
- *     by the backend from the effective extraction (Rules.md §9).
+ *     by the backend from the effective extraction.
  *
  * On rejection, thunks return a normalized payload `{ message, code?, status? }`
  * so the UI can render a readable error rather than a raw Error object.
@@ -81,7 +81,7 @@ export const fetchEnquiry = createAsyncThunk(
 );
 
 /**
- * Phase 5 — extended to pass filter + sort query params to the backend.
+ * extended to pass filter + sort query params to the backend.
  *
  * @param {{
  *   serviceLine?: 'all'|'ai'|'blockchain'|'web'|'mobile'|'game'|'other',
@@ -113,7 +113,7 @@ export const fetchEnquiries = createAsyncThunk(
 );
 
 /**
- * Phase 5 — update enquiry workflow status.
+ * update enquiry workflow status.
  *
  * @param {{ id: string, status: 'new'|'contacted'|'qualified'|'dropped' }} payload
  * @returns {Promise<object>}  The updated enquiry response shape.
@@ -134,9 +134,9 @@ export const updateEnquiryStatus = createAsyncThunk(
 );
 
 /**
- * Phase 6 — apply a human override to a single extracted field.
+ * apply a human override to a single extracted field.
  *
- * Architechure.md §4 Flow C: "Edit field → save override → recalculate
+ * Flow C: "Edit field → save override → recalculate
  * priority → return updated enquiry."
  *
  * The backend validates:
@@ -151,7 +151,7 @@ export const updateEnquiryStatus = createAsyncThunk(
  *
  * After the override is applied, the backend recomputes effectiveExtraction
  * (modelExtraction + humanOverrides) and recalculates priority via the
- * existing Phase 4 scoringService. The returned enquiry includes the new
+ * existing scoringService. The returned enquiry includes the new
  * effectiveExtraction, the preserved modelExtraction, the updated
  * humanOverrides, and the new priority.
  *
@@ -177,7 +177,7 @@ export const updateEnquiryField = createAsyncThunk(
 );
 
 /**
- * Phase 6 — clear a human override on a single field.
+ * clear a human override on a single field.
  *
  * Convenience wrapper for updateEnquiryField with value=null. After
  * clearing, the effective value falls back to the latest successful model
@@ -202,9 +202,9 @@ export const clearEnquiryFieldOverride = createAsyncThunk(
 );
 
 /**
- * Phase 7 — re-extract an enquiry safely.
+ * re-extract an enquiry safely.
  *
- * Architechure.md §4 Flow D: triggers a new LLM extraction (Groq → Gemini
+ * Flow D: triggers a new LLM extraction (Groq → Gemini
  * fallback) and persists it as a NEW ExtractionVersion (append-only). The
  * existing human overrides are PRESERVED — the new model extraction is
  * stored in `modelExtraction` and merged with the existing overrides in
@@ -239,7 +239,7 @@ export const reExtractEnquiry = createAsyncThunk(
 );
 
 /**
- * Phase 7 — accept the new model value for a conflicted field.
+ * accept the new model value for a conflicted field.
  *
  * After a re-extraction produces a model value that conflicts with an
  * active human override, the operator can explicitly accept the new model
@@ -272,9 +272,9 @@ export const acceptNewModelValue = createAsyncThunk(
 );
 
 /**
- * Phase 8 — import a sample-enquiries file and start batch extraction.
+ * import a sample-enquiries file and start batch extraction.
  *
- * Architechure.md §4 Flow B: Upload → POST /api/enquiries/import →
+ * Flow B: Upload → POST /api/enquiries/import →
  * parse → persist enquiries → create batch job → bounded concurrent
  * extraction → GET /api/batches/:id → polling → batch progress UI.
  *
@@ -287,7 +287,7 @@ export const acceptNewModelValue = createAsyncThunk(
  * batch) so the slice can store the batchId and prepend the new enquiries
  * to the queue.
  *
- * @param {File} file  The .txt file from the file input.
+ * @param {File} file The .txt file from the file input.
  * @returns {Promise<{enquiries: object[], failed: object[], meta: object, batch: object|null}>}
  */
 export const importBatch = createAsyncThunk(
@@ -309,7 +309,7 @@ export const importBatch = createAsyncThunk(
 );
 
 /**
- * Phase 8 — fetch batch progress + counters.
+ * fetch batch progress + counters.
  *
  * GET /api/batches/:id returns the current state of the batch: total,
  * pending, processing, completed, failed, status, failures[].
@@ -334,7 +334,7 @@ export const fetchBatch = createAsyncThunk(
 );
 
 /**
- * Phase 8 — refresh batch counters from live enquiry state.
+ * refresh batch counters from live enquiry state.
  *
  * POST /api/batches/:id/refresh recomputes the pending/processing/
  * completed/failed counters from the enquiry documents. Useful after
@@ -357,7 +357,7 @@ export const refreshBatch = createAsyncThunk(
 );
 
 /**
- * Health connectivity thunk (Phase 0). Kept here so App.jsx has a single
+ * Health connectivity thunk. Kept here so App.jsx has a single
  * import surface for system + enquiry thunks.
  */
 export const fetchHealth = createAsyncThunk(

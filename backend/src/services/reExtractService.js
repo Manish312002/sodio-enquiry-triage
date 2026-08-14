@@ -1,16 +1,12 @@
 /**
- * Re-extraction service — Phase 7.
+ * Re-extraction service.
  *
- * Source-of-truth: Rules.md §11 ("Re-Extraction Rules"), Architechure.md §4
- * Flow D ("Re-extraction"), Architechure.md §7 ("Effective Value Resolution"),
- * PRD.md FR-09 ("Re-extraction").
- *
- * The critical invariant (Phase 7 objective):
+ * The critical invariant:
  *
  *   A new model extraction MUST NEVER silently destroy an existing
  *   human override.
  *
- * Re-extraction flow (Architechure.md §4 Flow D):
+ * Re-extraction flow Flow D):
  *
  *   User clicks Re-extract
  *      ↓
@@ -24,30 +20,30 @@
  *      ↓
  *   Compare with human overrides  ← conflictService.detectConflicts
  *      ↓
- *   Keep human-controlled fields  ← reapplyOverrides (existing Phase 6 logic)
+ *   Keep human-controlled fields  ← reapplyOverrides (existing logic)
  *      ↓
  *   Expose model conflicts         ← returned in API response
  *      ↓
- *   Recalculate priority           ← applyPriorityToEnquiry (existing Phase 4)
+ *   Recalculate priority           ← applyPriorityToEnquiry (existing)
  *      ↓
  *   Return effective enquiry + conflicts
  *
- * ARCHITECTURAL BOUNDARIES (Phase 7):
+ * ARCHITECTURAL BOUNDARIES:
  *   - Does NOT create a second LLM implementation. Reuses the existing
  *     `extractionService.runExtraction` which in turn reuses `llmService`
  *     (Groq → Gemini fallback) and the existing extraction schema.
  *   - Does NOT modify originalText, receivedAt, sender, status, batchId.
  *   - Does NOT delete or overwrite historical ExtractionVersion rows
- *     (Rules.md §14: "Extraction versions are append-only").
+ *: "Extraction versions are append-only").
  *   - Does NOT clear or modify existing human overrides. The override
  *     remains authoritative until the operator explicitly accepts the
  *     new model value via POST /fields/:field/accept-model.
  *   - Does NOT compute priority directly. Reuses `applyPriorityToEnquiry`
- *     from Phase 4 scoringService.
+ * scoringService.
  *   - The client cannot specify provider, model, version, or timestamp —
  *     the server controls all of these.
  *
- * FAILURE BEHAVIOR (Rules.md §12):
+ * FAILURE BEHAVIOR:
  *   If re-extraction fails:
  *     - existing model extraction remains intact (modelExtraction unchanged)
  *     - existing extraction versions remain intact (history append-only)
@@ -117,7 +113,7 @@ export async function reExtract(enquiryId) {
   // 2. Delegate to the existing extractionService. This reuses the entire
   //    Groq → Gemini fallback chain, the ExtractionVersion append-only
   //    persistence, the reapplyOverrides logic, and the priority
-  //    recalculation. Phase 7 does NOT duplicate any of this.
+  //    recalculation. does NOT duplicate any of this.
   const { enquiry, versions, outcome } = await runExtraction(enquiryId);
 
   // 3. Detect conflicts between active human overrides and the new model

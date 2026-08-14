@@ -1,10 +1,10 @@
 /**
  * Enquiry slice.
  *
- * Architechure.md §11 specified state shape:
+ * specified state shape:
  *   enquiries: { items, selectedId, filters, sort, loading, error, batch }
  *
- * Phase 5 additions:
+ * additions:
  *   - filters { serviceLine, priority, status } now drive the fetchEnquiries
  *     thunk — selectors re-dispatch when filters change.
  *   - sort { by, dir } likewise. by ∈ 'priority' | 'receivedAt'; dir ∈ 'asc'|'desc'.
@@ -13,7 +13,7 @@
  *   - statusUpdateStatus / statusUpdateError track the status-mutation
  *     lifecycle so the UI can show a per-row "saving…" / inline error.
  *
- * Phase 6 additions:
+ * additions:
  *   - updateEnquiryField / clearEnquiryFieldOverride thunks handle inline
  *     field editing. On success they patch BOTH the selected enquiry AND
  *     the matching queue item (so the queue's priority badge reflects the
@@ -22,15 +22,15 @@
  *     track the per-field mutation lifecycle so the InlineField component
  *     can show "SAVING…" / inline error / disable the input while pending.
  *
- * Phase 1 retained:
+ * retained:
  *   - items[], selectedId, selected, selectedStatus/Error
  *   - createStatus / createError / lastCreatedId
  *
- * Phase 0 retained:
+ * retained:
  *   - system.health / healthStatus / healthError
  *
  * NO scoring logic lives here. Priority is read from enquiry.priority
- * as returned by the backend (Rules.md §9 / Phase 4 boundary). The
+ * as returned by the backend / boundary). The
  * frontend never recomputes priority and never sets it directly — the
  * PATCH /fields/:field endpoint derives priority server-side.
  */
@@ -61,22 +61,22 @@ const initialState = {
   selectedStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
   selectedError: null,
 
-  // Paste submission (Phase 1)
+  // Paste submission
   createStatus: 'idle',
   createError: null,
   lastCreatedId: null,
 
-  // Phase 5 — filters + sort. These drive the fetchEnquiries thunk.
+  // filters + sort. These drive the fetchEnquiries thunk.
   // 'all' means "no filter" — the backend treats it as omission.
   filters: { serviceLine: 'all', priority: 'all', status: 'all' },
   sort: { by: 'receivedAt', dir: 'desc' },
 
-  // Phase 5 — status mutation lifecycle
+  // status mutation lifecycle
   statusUpdateStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
   statusUpdateError: null,
   statusUpdateId: null, // which enquiry id is currently being updated
 
-  // Phase 6 — field override mutation lifecycle.
+  // field override mutation lifecycle.
   // Tracks the in-flight PATCH /fields/:field request so the InlineField
   // component can show "SAVING…", disable its input, and surface inline
   // errors. fieldUpdateField lets us know WHICH field on the enquiry is
@@ -86,7 +86,7 @@ const initialState = {
   fieldUpdateId: null, // enquiry id
   fieldUpdateField: null, // field name being updated
 
-  // Phase 7 — re-extraction lifecycle.
+  // re-extraction lifecycle.
   // Tracks the in-flight POST /re-extract request so the ExtractionPanel
   // can show "EXTRACTION PROCESSING" and the conflict UI after success.
   // On fulfilled, `reExtractConflicts` holds the conflicts array returned
@@ -99,7 +99,7 @@ const initialState = {
   reExtractId: null, // enquiry id being re-extracted
   reExtractConflicts: [], // conflicts array from the last re-extraction
 
-  // Phase 7 — accept-new-model lifecycle.
+  // accept-new-model lifecycle.
   // Tracks the in-flight POST /fields/:field/accept-model request so the
   // InlineField component can show "ACCEPTING…" and disable the buttons.
   acceptModelStatus: 'idle', // 'idle' | 'pending' | 'succeeded' | 'failed'
@@ -107,7 +107,7 @@ const initialState = {
   acceptModelId: null,
   acceptModelField: null,
 
-  // Phase 8 — batch import + progress.
+  // batch import + progress.
   // The operator uploads a sample-enquiries file. The backend parses +
   // persists + creates a BatchJob + kicks off background extraction. The
   // frontend polls GET /api/batches/:id until the batch reaches a
@@ -123,7 +123,7 @@ const initialState = {
   batchFetchError: null,
   batchPolling: false,
 
-  // Phase 0 — system health
+  // system health
   system: {
     health: null,
     healthStatus: 'idle',
@@ -135,7 +135,7 @@ const enquirySlice = createSlice({
   name: 'enquiries',
   initialState,
   reducers: {
-    // --- Phase 5 filter / sort reducers ---
+    // --- ---
     setServiceLineFilter(state, action) {
       state.filters.serviceLine = action.payload;
     },
@@ -166,7 +166,7 @@ const enquirySlice = createSlice({
     setSelectedId(state, action) {
       const newId = action.payload;
       state.selectedId = newId;
-      // BUG 2 FIX: resolve `selected` from the current `items` array
+      // resolve `selected` from the current `items` array
       // instead of clearing it to null. Previously this reducer set
       // `selected = null`, which caused EnquiryDetail to render "NO
       // ENQUIRY SELECTED" whenever the operator clicked a queue row —
@@ -193,7 +193,7 @@ const enquirySlice = createSlice({
         state.selectedStatus = newId ? 'pending' : 'idle';
         state.selectedError = null;
       }
-      // Phase 7 — clear re-extraction state when the selected enquiry changes.
+      // clear re-extraction state when the selected enquiry changes.
       // Conflicts belong to a specific enquiry's re-extraction; switching
       // enquiries resets the conflict UI.
       state.reExtractStatus = 'idle';
@@ -210,7 +210,7 @@ const enquirySlice = createSlice({
       state.selected = null;
       state.selectedStatus = 'idle';
       state.selectedError = null;
-      // Phase 7 — clear re-extraction state too.
+      // clear re-extraction state too.
       state.reExtractStatus = 'idle';
       state.reExtractError = null;
       state.reExtractId = null;
@@ -228,7 +228,7 @@ const enquirySlice = createSlice({
       state.statusUpdateError = null;
       state.statusUpdateId = null;
     },
-    // Phase 6 — clear the per-field mutation lifecycle state. Called by
+    // clear the per-field mutation lifecycle state. Called by
     // the InlineField component after showing success/error feedback so
     // the next edit starts from a clean slate.
     clearFieldUpdateState(state) {
@@ -237,7 +237,7 @@ const enquirySlice = createSlice({
       state.fieldUpdateId = null;
       state.fieldUpdateField = null;
     },
-    // Phase 7 — clear the re-extraction lifecycle state. Called by the
+    // clear the re-extraction lifecycle state. Called by the
     // ExtractionPanel after the operator has acknowledged the conflict UI
     // (e.g. after accepting/keeping all conflicts) or after showing error
     // feedback.
@@ -249,7 +249,7 @@ const enquirySlice = createSlice({
       // the operator resolves them or switches enquiries. The conflict UI
       // remains visible so the operator can decide at their own pace.
     },
-    // Phase 7 — clear the accept-model lifecycle state. Called by
+    // clear the accept-model lifecycle state. Called by
     // InlineField after showing success/error feedback.
     clearAcceptModelState(state) {
       state.acceptModelStatus = 'idle';
@@ -257,7 +257,7 @@ const enquirySlice = createSlice({
       state.acceptModelId = null;
       state.acceptModelField = null;
     },
-    // Phase 7 — mark a conflict as resolved on the client side. Called
+    // mark a conflict as resolved on the client side. Called
     // when the operator clicks [Keep confirmed] (no API call needed —
     // the override is already preserved server-side). Removes the field
     // from the local reExtractConflicts array so the CONFLICT UI
@@ -268,7 +268,7 @@ const enquirySlice = createSlice({
         (c) => c.field !== field,
       );
     },
-    // Phase 8 — clear the batch state. Called when the operator dismisses
+    // clear the batch state. Called when the operator dismisses
     // the batch progress panel after the batch reaches a terminal state.
     // The underlying enquiries remain in the queue (they were prepended
     // on import); only the batch progress state is cleared.
@@ -280,7 +280,7 @@ const enquirySlice = createSlice({
       state.batchFetchError = null;
       state.batchPolling = false;
     },
-    // Phase 8 — mark whether the polling hook is active. The hook reads
+    // mark whether the polling hook is active. The hook reads
     // this to avoid starting duplicate intervals; the slice uses it to
     // decide whether to show "POLLING…" in the UI.
     setBatchPolling(state, action) {
@@ -288,7 +288,7 @@ const enquirySlice = createSlice({
     },
   },
   extraReducers: (builder) => {
-    // --- health (Phase 0) ---
+    // --- health ---
     builder
       .addCase(fetchHealth.pending, (state) => {
         state.system.healthStatus = 'pending';
@@ -303,7 +303,7 @@ const enquirySlice = createSlice({
         state.system.healthError = action.payload?.message ?? 'Unknown error';
       });
 
-    // --- create enquiry (Phase 1) ---
+    // --- create enquiry ---
     builder
       .addCase(createEnquiry.pending, (state) => {
         state.createStatus = 'pending';
@@ -347,7 +347,7 @@ const enquirySlice = createSlice({
         state.selectedError = action.payload ?? { message: 'Unknown error' };
       });
 
-    // --- fetch list (Phase 1 + Phase 5 filters/sort) ---
+    // --- fetch list (Phase 1 + filters/sort) ---
     builder
       .addCase(fetchEnquiries.pending, (state) => {
         state.listStatus = 'pending';
@@ -356,7 +356,7 @@ const enquirySlice = createSlice({
       .addCase(fetchEnquiries.fulfilled, (state, action) => {
         state.listStatus = 'succeeded';
         state.items = action.payload.enquiries;
-        // BUG 1/2 FIX: re-resolve `selected` from the new `items` array
+        // re-resolve `selected` from the new `items` array
         // after a fetch. Previously this reducer only replaced `items`
         // and left `selected` untouched — which meant `selected` could
         // hold a STALE copy of the enquiry (e.g. extractionState='pending'
@@ -399,7 +399,7 @@ const enquirySlice = createSlice({
         state.listError = action.payload ?? { message: 'Unknown error' };
       });
 
-    // --- update status (Phase 5) ---
+    // --- update status ---
     builder
       .addCase(updateEnquiryStatus.pending, (state, action) => {
         state.statusUpdateStatus = 'pending';
@@ -426,7 +426,7 @@ const enquirySlice = createSlice({
         state.statusUpdateId = null;
       });
 
-    // --- field override (Phase 6) ---
+    // --- field override ---
     // updateEnquiryField and clearEnquiryFieldOverride share the same
     // lifecycle tracking because they share the same UI surface (the
     // InlineField component). Either thunk's pending/fulfilled/rejected
@@ -486,7 +486,7 @@ const enquirySlice = createSlice({
         state.fieldUpdateField = null;
       });
 
-    // --- re-extract (Phase 7) ---
+    // --- re-extract ---
     // Tracks the in-flight POST /re-extract request. On fulfilled, stores
     // the conflicts array returned by the backend so the InlineField
     // components can render the CONFLICT UI.
@@ -522,7 +522,7 @@ const enquirySlice = createSlice({
         // prior successful re-extraction). The UI shows the error inline.
       });
 
-    // --- accept new model value (Phase 7) ---
+    // --- accept new model value ---
     // Tracks the in-flight POST /fields/:field/accept-model request. On
     // fulfilled, patches the enquiry and removes the resolved conflict
     // from the local conflicts array.
@@ -558,7 +558,7 @@ const enquirySlice = createSlice({
         state.acceptModelField = null;
       });
 
-    // --- batch import (Phase 8) ---
+    // --- batch import ---
     // Tracks the in-flight POST /api/enquiries/import request. On
     // fulfilled, stores the batch response and prepends the new enquiries
     // to the queue so the operator sees them immediately.
@@ -592,7 +592,7 @@ const enquirySlice = createSlice({
         state.batchImportError = action.payload ?? { message: 'Unknown error' };
       });
 
-    // --- fetch batch progress (Phase 8) ---
+    // --- fetch batch progress ---
     // Tracks the in-flight GET /api/batches/:id request. On fulfilled,
     // stores the latest batch state so the BatchProgress component can
     // render the counters + status + failures.
@@ -629,7 +629,7 @@ const enquirySlice = createSlice({
         state.batchFetchError = action.payload ?? { message: 'Unknown error' };
       });
 
-    // --- refresh batch counters (Phase 8) ---
+    // --- refresh batch counters ---
     // Tracks the in-flight POST /api/batches/:id/refresh request. On
     // fulfilled, stores the refreshed batch state. The operator triggers
     // this manually via a [Refresh] button after retrying a failed item.

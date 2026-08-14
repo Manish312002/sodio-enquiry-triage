@@ -1,14 +1,5 @@
 /**
- * Batch service — Phase 8 bounded-concurrency batch extraction.
- *
- * Source-of-truth:
- *   - Architechure.md §4 Flow B ("File batch")
- *   - Architechure.md §6 (batchJobs collection schema)
- *   - Architechure.md §12 (Batch Concurrency: bounded, configurable)
- *   - Architechure.md §13 (Failure Model: per-item states, isolation)
- *   - Rules.md §12 (Batch: one failed item must not crash the whole batch)
- *   - Phases.md Phase 8 (bounded concurrency, batch job record, progress
- *     endpoint, per-item states, retry failed item, terminal counters)
+ * Batch service — bounded-concurrency batch extraction.
  *
  * What this service DOES:
  *   - createBatch({ enquiryIds, fileName })  → creates a BatchJob with
@@ -28,15 +19,15 @@
  * What this service does NOT do:
  *   - It does NOT call the LLM directly. All extraction goes through
  *     extractionService.runExtraction → llmService → Groq → Gemini fallback.
- *     This is the Phase 3 provider boundary; Phase 8 does not duplicate it.
+ *     This is the provider boundary; does not duplicate it.
  *   - It does NOT compute priority. Priority is computed inside
- *     extractionService.runExtraction via applyPriorityToEnquiry (Phase 4).
- *   - It does NOT parse files. Parsing is parserService.parseEnquiryFile
- *     (Phase 2), called by the import controller.
- *   - It does NOT persist enquiries. Persistence is enquiryService.createEnquiry
- *     (Phase 1/2), called by the import controller.
+ *     extractionService.runExtraction via applyPriorityToEnquiry.
+ *   - It does NOT parse files. Parsing is parserService.parseEnquiryFile,
+ *     called by the import controller.
+ *   - It does NOT persist enquiries. Persistence is enquiryService.createEnquiry,
+ *     called by the import controller.
  *   - It does NOT modify originalText / receivedAt / sender / humanOverrides.
- *     Those concerns belong to Phase 1 (immutability) and Phase 6 (overrides).
+ *     Those concerns belong to enquiryService (immutability) and humanOverrideService (overrides).
  *
  * Concurrency strategy:
  *   A simple worker-pool pattern: spawn N workers (N = env.BATCH_CONCURRENCY),
@@ -103,7 +94,7 @@ const WORKER_ERROR_RETRIES = 0;
  * batchId separately.
  *
  * @param {object} input
- * @param {string[]} input.enquiryIds  Array of MongoDB _id strings (24-hex).
+ * @param {string[]} input.enquiryIds Array of MongoDB _id strings (24-hex).
  * @param {string}  [input.fileName]   Original upload file name (audit only).
  * @returns {Promise<import('../models/BatchJob.js').default>}
  */
@@ -272,8 +263,8 @@ export async function runBatchExtraction(batchId) {
  * the `failed` counter, appends a failures[] entry, and continues.
  *
  * @param {string} batchId
- * @param {string[]} queue  Shared mutable array — workers race to pop.
- * @param {number} workerIndex  For logging only.
+ * @param {string[]} queue Shared mutable array — workers race to pop.
+ * @param {number} workerIndex For logging only.
  */
 async function runWorker(batchId, queue, workerIndex) {
   // We do NOT use an explicit concurrency primitive (like p-limit) because
@@ -294,7 +285,7 @@ async function runWorker(batchId, queue, workerIndex) {
 
     let outcome;
     try {
-      // The existing Phase 3/7 extraction pipeline does all the work:
+      // The existing/7 extraction pipeline does all the work:
       //   - Loads enquiry, refuses if already 'processing'.
       //   - Sets extractionState='processing' and saves (so the enquiry
       //     itself reflects the in-flight state).

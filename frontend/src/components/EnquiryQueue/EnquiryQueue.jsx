@@ -1,7 +1,7 @@
 /**
- * EnquiryQueue — Phase 5 (Phase 10 keyboard-nav polish).
+ * EnquiryQueue — (Phase 10 keyboard-nav polish).
  *
- * design.md §6 "Enquiry Row": compact operational record, not a card.
+ * "Enquiry Row": compact operational record, not a card.
  * Each row shows:
  *   - received time
  *   - contact name + company
@@ -21,7 +21,7 @@
  *   - extraction pending / failed (rendered inline in the row, not hidden)
  *
  * The queue is rendered as a <ul> of <li> buttons for keyboard navigation
- * (design.md §16). Phase 10 adds roving tabindex + ArrowUp/ArrowDown/Home/End
+ *.
  * navigation so the operator can move through the queue without leaving the
  * keyboard. The currently-selected enquiry gets an accent left rail AND is the
  * single tab-stop for the list.
@@ -55,7 +55,7 @@ export default function EnquiryQueue() {
   const listRef = useRef(null);
 
   // Loading — render skeleton rows so the queue structure is preserved.
-  // design.md §14: "Use skeleton rows that preserve the table structure.
+  //: "Use skeleton rows that preserve the table structure.
   // Avoid full-screen loading spinners."
   if (listStatus === 'pending' && items.length === 0) {
     return (
@@ -96,7 +96,7 @@ export default function EnquiryQueue() {
   }
 
   // Empty queue — differentiate "no enquiries at all" from "no matches".
-  // design.md §13: "Do not use generic illustrations."
+  //: "Do not use generic illustrations."
   if (items.length === 0) {
     return (
       <QueueShell count={0}>
@@ -127,8 +127,8 @@ export default function EnquiryQueue() {
     );
   }
 
-  // Phase 10 — keyboard navigation handler.
-  // design.md §16: "Keyboard navigation should be possible through table rows
+  // keyboard navigation handler.
+  //: "Keyboard navigation should be possible through table rows
   // and editable fields."
   //
   // Roving tabindex: only the focused row has tabIndex=0, all others have

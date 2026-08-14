@@ -1,7 +1,7 @@
 /**
- * BatchProgress — Phase 8 batch import + progress surface.
+ * BatchProgress — batch import + progress surface.
  *
- * Design (design.md §11 "Import Experience" + §12 "Batch Progress"):
+ * Design "Import Experience" + §12 "Batch Progress"):
  *
  *   IMPORT ENQUIRIES
  *   Drop a source file here
@@ -28,7 +28,7 @@
  *     reExtractEnquiry thunk for the failed enquiry, then re-fetches
  *     the batch via refreshBatch).
  *
- * Architectural boundaries (Rules.md §9, Architechure.md §14):
+ * Architectural boundaries,:
  *   - No LLM calls from React — only REST.
  *   - No secrets in the component.
  *   - The component does NOT compute priority, parse files, or run

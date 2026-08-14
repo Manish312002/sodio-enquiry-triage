@@ -1,9 +1,9 @@
 /**
- * StatusTrack — Phase 5.
+ * StatusTrack —.
  *
  * Renders the four-state workflow as a compact horizontal state track
- * (design.md §9). Clicking a node dispatches updateEnquiryStatus, which
- * PATCHes the backend (Rules.md §14: status changes are validated).
+ *. Clicking a node dispatches updateEnquiryStatus, which
+ * PATCHes the backend: status changes are validated).
  *
  *   NEW ──── CONTACTED ──── QUALIFIED ──── DROPPED
  *

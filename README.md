@@ -7,10 +7,6 @@ deterministically in application code, and give a human operator a fast
 review console with inline corrections, re-extraction safety, and batch
 progress with per-item failure handling.
 
-> **Status:** Phase 11 — Submission Documentation. All twelve phases (0–11)
-> complete. See `Docs/Phases.md` for the roadmap and `Docs/memory.md` for
-> the build log.
-
 ## Stack
 
 - **Frontend:** React + Vite + JavaScript, Tailwind CSS, Redux Toolkit +
@@ -28,14 +24,6 @@ progress with per-item failure handling.
 
 ```
 .
-├── Docs/                  # Source-of-truth documentation
-│   ├── PRD.md             # Product requirements
-│   ├── Architechure.md    # Architecture & folder structure (filename preserved)
-│   ├── Rules.md           # Implementation rules, scoring, prompt-injection boundary
-│   ├── Phases.md          # Phased delivery plan (0 → 11)
-│   ├── design.md          # "Signal Desk" UI/UX design system
-│   ├── memory.md          # Operational build memory (phase-by-phase log)
-│   └── SCREENSHOTS.md     # Screenshot capture workflow for the 6 capabilities
 ├── backend/               # Express API + Mongoose + LLM adapters
 │   ├── src/
 │   │   ├── config/        # env.js (zod-validated), db.js
@@ -67,8 +55,8 @@ progress with per-item failure handling.
 ├── test-data/
 │   ├── sample-enquiries.pdf     # Operator-supplied source (5 pages, 20 blocks)
 │   └── sample-enquiries.txt     # Plaintext extraction (parser fixture)
-├── AI-LOG.md              # AI mistakes + developer response (Phase 11)
-├── SELF-REVIEW.md         # Blunt self-review findings (Phase 11)
+├── AI-LOG.md              # AI mistakes + developer response
+├── SELF-REVIEW.md         # Blunt self-review findings
 ├── .env.example           # Environment variable template (no secrets)
 └── .gitignore
 ```
@@ -242,12 +230,8 @@ See `.env.example` for the full list. The critical ones:
   prompt.** The Canonical Contract Fix (commit `071f793`) was driven by
   observed snake_case / null budget output from a live Groq call, but
   the fix itself was verified with mocked LLM HTTP. The operator
-  should run `node /home/z/my-project/scripts/verify-canonical-extraction.js`
+  should run `node scripts/verify-canonical-extraction.js`
   with a real `gsk_...` key. See `SELF-REVIEW.md` finding #3.
-- **`Docs/Architechure.md` filename is misspelled** ("Architechure"
-  rather than "Architecture"). Phase 0 decision 7: preserved because
-  renaming would break cross-references in other docs. Noted for a
-  future documentation pass.
 - **No deployment artefacts.** Per task brief, deployment is optional.
   The repository runs locally only; no Dockerfile, no CI workflow, no
   production env template beyond `.env.example`.
@@ -273,9 +257,7 @@ See `.env.example` for the full list. The critical ones:
 
 ## Decisions
 
-Locked-in product decisions (full rationale in `Docs/memory.md` →
-
-"Decisions Locked In"):
+Locked-in product decisions:
 
 1. **Duplicate / follow-up** — keep separate enquiry records and link
    them rather than merging. Each enquiry is a separate incoming
@@ -329,10 +311,10 @@ Other significant build decisions:
   rejects them).
 - **Strict + open shapes.** `extractionSchema.js` is `.strict()` (no
   unknown keys). `timeline.normalized` is intentionally open-shaped
-  per Rules.md §7 ("Open shape for normalized markers — filled
-  opportunistically without ever inventing dates"). Therefore the
-  JSON Schema handed to the model uses `strict: false` (not `strict:
-  true`); Zod remains the authoritative post-response validator.
+  so it can be filled opportunistically without ever inventing dates.
+  Therefore the JSON Schema handed to the model uses `strict: false`
+  (not `strict: true`); Zod remains the authoritative post-response
+  validator.
 - **Provider timeout on both providers.** Groq uses the `openai` SDK's
   built-in `timeout` client option. Gemini wraps the SDK call in a
   `withTimeout()` helper that races the promise against
@@ -493,7 +475,7 @@ prompt, tests).
 PURE function: same input → same output, no I/O, no `Date.now()` drift,
 no `Math.random()`. 54 unit tests cover all branches.
 
-### Rule (mirrors `Docs/Rules.md` §9)
+### Rule
 
 ```
 base                        0
@@ -548,9 +530,6 @@ priority simply because the model extracted a budget. The
 `MAJOR_CURRENCIES` guard explicitly excludes INR (lakhs), IDR, etc.
 from the numeric thresholds — for those currencies the conservative
 non-numeric score (`+1` when a budget is present) is applied instead.
-This implements Rules.md §9: "For currencies with very different
-purchasing power, do not pretend numeric thresholds are economically
-equivalent."
 
 ### Explainability
 
@@ -627,7 +606,6 @@ If I had two more days, in priority order:
    it and no automatic detection. Add a simple "Mark as follow-up
    of…" action in the detail panel + a backend heuristic that
    suggests likely duplicates (same contact email + within 7 days).
-   This directly addresses PRD §7 "Same person / same project".
 
 6. **Deployment artefacts.** Per task brief, deployment is optional.
    But a `docker-compose.yml` (MongoDB + backend + frontend) would
@@ -635,26 +613,6 @@ If I had two more days, in priority order:
    mostly packaging, no new code.
 
 ---
-
-## Documentation
-
-- `Docs/PRD.md` — product requirements
-- `Docs/Architechure.md` — architecture & folder structure
-  (filename misspelling preserved — see Decisions)
-- `Docs/Rules.md` — implementation rules, scoring, prompt-injection
-  boundary
-- `Docs/Phases.md` — phased delivery plan (Phase 0 → 11)
-- `Docs/design.md` — "Signal Desk" UI/UX design system
-- `Docs/memory.md` — operational build memory (phase-by-phase log,
-  decisions, known limitations)
-- `Docs/SCREENSHOTS.md` — screenshot capture workflow for the six
-  required capability screenshots
-- `Docs/phase2-inspection-report.md` — fixture inspection findings
-  from the real sample file
-- `AI-LOG.md` — AI mistakes + developer response (this Phase 11
-  deliverable)
-- `SELF-REVIEW.md` — blunt self-review findings (this Phase 11
-  deliverable)
 
 ## Security notes
 
@@ -688,10 +646,11 @@ If I had two more days, in priority order:
 
 ## Git history
 
-21 commits, intact (no rewrites, no squashes). The full history is
+22 commits, intact (no rewrites, no squashes). The full history is
 visible via `git log --oneline`:
 
 ```
+7c61cda Phase 11: submission documentation
 43deae4 docs(memory): record Phase 10 completion (commit 387fa15)
 387fa15 Phase 10: UX polish + verification
 62eee1d Phase 9: security + AI boundaries
@@ -717,8 +676,7 @@ f17b1a4 Phase 1: database + single enquiry ingestion (verified end-to-end)
 
 Each phase has a corresponding `docs(memory): record Phase N completion`
 follow-up commit so the build memory is updated in a separate
-atomic commit (memory.md is the only file touched in those
-follow-ups). Five `fix(...)` commits capture mid-phase corrections
+atomic commit. Five `fix(...)` commits capture mid-phase corrections
 that were significant enough to deserve their own commit (the
 Canonical Extraction Contract fix `071f793` is the most important
 of these — see `AI-LOG.md` entry #1).

@@ -1,7 +1,7 @@
 /**
- * FilterRail — Phase 5.
+ * FilterRail —.
  *
- * The left-side filter column (design.md §5). Three filter groups:
+ * The left-side filter column. Three filter groups:
  *   - SERVICE LINE (All / AI / Blockchain / Web / Mobile / Game / Other)
  *   - PRIORITY (All / HIGH / MEDIUM / LOW)
  *   - STATUS (All / New / Contacted / Qualified / Dropped)

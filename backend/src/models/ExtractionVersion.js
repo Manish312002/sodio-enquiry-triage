@@ -1,17 +1,17 @@
 /**
  * ExtractionVersion Mongoose model.
  *
- * Source-of-truth: Architechure.md §6 ("extractionVersions collection").
+ *
  *
  * Purpose:
  *   Each LLM extraction attempt (success OR failure) is persisted as an
- *   append-only version row. This implements Rules.md §14:
+ *   append-only version row. This implements:
  *     "Extraction versions are append-only."
  *
  *   A failed attempt is also persisted (state='failed', errorCode set) so
  *   the operator can inspect what went wrong without losing the audit trail.
  *
- * Phase 3 scope:
+ * scope:
  *   - One ExtractionVersion per extraction attempt (Groq or Gemini).
  *   - If Groq fails recoverably and Gemini succeeds, BOTH versions are
  *     persisted: one failed (groq) + one completed (gemini).
@@ -25,7 +25,7 @@
  * Relation to Enquiry:
  *   - `enquiryId` references the parent Enquiry. We do NOT use populate
  *     here — the relationship is one-way (ExtractionVersion -> Enquiry).
- *     Phase 7 (re-extraction safety) will add a `GET /api/enquiries/:id/extractions`
+ * (re-extraction safety) will add a `GET /api/enquiries/:id/extractions`
  *     endpoint that queries by enquiryId.
  *
  * Immutability:
@@ -94,7 +94,7 @@ const extractionVersionSchema = new Schema(
     },
 
     // Monotonic per-enquiry version number. The service layer computes this
-    // as `count(enquiryId) + 1` so re-extraction (Phase 7) creates version 2, 3, ...
+    // as `count(enquiryId) + 1` so re-extraction creates version 2, 3, ...
     version: { type: Number, required: true, min: 1 },
 
     provider: {
